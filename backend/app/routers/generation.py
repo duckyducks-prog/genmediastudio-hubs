@@ -351,7 +351,8 @@ async def upscale_image(
         return await service.upscale_image(
             image=request.image,
             upscale_factor=request.upscale_factor,
-            output_mime_type=request.output_mime_type
+            output_mime_type=request.output_mime_type,
+            user_id=user["uid"],
         )
     except AppError:
         raise

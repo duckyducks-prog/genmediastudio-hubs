@@ -1,5 +1,5 @@
 import { logger } from "@/lib/logger";
-import { memo, useState, useEffect } from "react";
+import { memo, useState, useEffect, useRef } from "react";
 import { Handle, Position, NodeProps } from "reactflow";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,10 +20,12 @@ import {
   Download,
   ChevronDown,
   Power,
+  FolderOpen,
 } from "lucide-react";
 import { auth } from "@/lib/firebase";
 import { useToast } from "@/hooks/use-toast";
 import { RunNodeButton } from "./RunNodeButton";
+import { useFolders } from "@/hooks/useFolders";
 
 function GenerateImageNode({ data, id }: NodeProps<GenerateImageNodeData>) {
   const config = NODE_CONFIGURATIONS[NodeType.GenerateImage];
@@ -55,7 +57,27 @@ function GenerateImageNode({ data, id }: NodeProps<GenerateImageNodeData>) {
   const [isUpscaling, setIsUpscaling] = useState(false);
   const [upscaleError, setUpscaleError] = useState<string | null>(null);
   const [currentImageUrl, setCurrentImageUrl] = useState<string | null>(null);
+  const [savedAssetId, setSavedAssetId] = useState<string | null>(data.savedAssetId || null);
+  const [assignedFolderId, setAssignedFolderId] = useState<string | null>(null);
+  const [isSavingFolder, setIsSavingFolder] = useState(false);
+  const foldersFetched = useRef(false);
+  const { folders, fetchFolders } = useFolders();
   const { toast } = useToast();
+
+  // Sync savedAssetId from node data (set after generation)
+  useEffect(() => {
+    if (data.savedAssetId && data.savedAssetId !== savedAssetId) {
+      setSavedAssetId(data.savedAssetId);
+    }
+  }, [data.savedAssetId]);
+
+  // Lazy-fetch folders once when the node completes and has a saved asset
+  useEffect(() => {
+    if (isCompleted && savedAssetId && !foldersFetched.current) {
+      foldersFetched.current = true;
+      fetchFolders();
+    }
+  }, [isCompleted, savedAssetId, fetchFolders]);
 
   const imageUrl = currentImageUrl || incomingImageUrl;
 
@@ -148,6 +170,23 @@ function GenerateImageNode({ data, id }: NodeProps<GenerateImageNodeData>) {
       if (result.image) {
         const mimeType = result.mime_type || "image/png";
         setCurrentImageUrl(`data:${mimeType};base64,${result.image}`);
+        if (result.saved_asset_id) {
+          setSavedAssetId(result.saved_asset_id);
+          setAssignedFolderId(null);
+          if (!foldersFetched.current) {
+            foldersFetched.current = true;
+            fetchFolders();
+          }
+        }
+        if (result.saved_to_library) {
+          toast({ title: "Image upscaled", description: "Saved to your library." });
+        } else {
+          toast({
+            title: "Image upscaled",
+            description: result.save_error || "Could not save to library.",
+            variant: "destructive",
+          });
+        }
       } else {
         throw new Error("No image returned from upscale API");
       }
@@ -158,6 +197,27 @@ function GenerateImageNode({ data, id }: NodeProps<GenerateImageNodeData>) {
       );
     } finally {
       setIsUpscaling(false);
+    }
+  };
+
+  const handleAssignFolder = async (folderId: string) => {
+    if (!savedAssetId) return;
+    setIsSavingFolder(true);
+    try {
+      const user = auth.currentUser;
+      const token = await user?.getIdToken();
+      const url = API_ENDPOINTS.assets.moveToFolder(savedAssetId, folderId === "__none__" ? null : folderId);
+      const res = await fetch(url, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error(`Failed to assign folder: ${res.status}`);
+      setAssignedFolderId(folderId === "__none__" ? null : folderId);
+      toast({ title: "Folder assigned", description: "Asset moved successfully." });
+    } catch (e) {
+      toast({ title: "Failed to assign folder", variant: "destructive" });
+    } finally {
+      setIsSavingFolder(false);
     }
   };
 
@@ -362,6 +422,31 @@ function GenerateImageNode({ data, id }: NodeProps<GenerateImageNodeData>) {
               <Download className="w-3 h-3 mr-1" />
               Download Image
             </Button>
+
+            {/* Folder Picker (only when asset is saved) */}
+            {savedAssetId && folders.length > 0 && (
+              <div className="flex items-center gap-1.5">
+                <FolderOpen className="w-3 h-3 text-muted-foreground shrink-0" />
+                <Select
+                  value={assignedFolderId ?? "__unset__"}
+                  onValueChange={handleAssignFolder}
+                  disabled={isSavingFolder || data.readOnly}
+                >
+                  <SelectTrigger className="h-7 text-xs flex-1">
+                    <SelectValue placeholder="Add to folder…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {assignedFolderId && (
+                      <SelectItem value="__none__">Remove from folder</SelectItem>
+                    )}
+                    {folders.map((f) => (
+                      <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {isSavingFolder && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground shrink-0" />}
+              </div>
+            )}
 
             {/* Run Node Button */}
             <RunNodeButton nodeId={id} isExecuting={isGenerating} disabled={data.readOnly} label="Regenerate" loadingLabel="Generating..." />

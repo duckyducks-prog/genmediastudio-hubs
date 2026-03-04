@@ -25,6 +25,13 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Download,
   Trash2,
   Image as ImageIcon,
@@ -32,11 +39,14 @@ import {
   Loader2,
   X,
   RefreshCw,
+  Archive,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { auth } from "@/lib/firebase";
 import { API_ENDPOINTS } from "@/lib/api-config";
 import { logger } from "@/lib/logger";
+import { useFolders } from "@/hooks/useFolders";
+import { FolderSidebar } from "./FolderSidebar";
 
 interface Asset {
   id: string;
@@ -45,6 +55,7 @@ interface Asset {
   prompt: string;
   created_at: string;
   mime_type: string;
+  folder_id?: string | null;
 }
 
 interface AssetLibraryProps {
@@ -64,15 +75,28 @@ const AssetLibrary = forwardRef<AssetLibraryRef, AssetLibraryProps>(
     const [filter, setFilter] = useState<"all" | "image" | "video">("all");
     const [isLoading, setIsLoading] = useState(false);
     const [deleteId, setDeleteId] = useState<string | null>(null);
+    const [deletingFolderId, setDeletingFolderId] = useState<string | null>(null);
+    const [isDownloadingZip, setIsDownloadingZip] = useState(false);
     const [previewAsset, setPreviewAsset] = useState<Asset | null>(null);
+    const [selectedFolderId, setSelectedFolderId] = useState<string>("all");
     const { toast } = useToast();
+
+    const {
+      folders,
+      fetchFolders,
+      createFolder,
+      renameFolder,
+      deleteFolder,
+      moveAssetToFolder,
+    } = useFolders();
 
     // Fetch assets from API
     const fetchAssets = useCallback(
       async (assetType?: "image" | "video") => {
         setIsLoading(true);
         try {
-          const url = API_ENDPOINTS.library.list(assetType);
+          const folderId = selectedFolderId === "all" ? undefined : selectedFolderId;
+          const url = API_ENDPOINTS.library.list(assetType, folderId);
 
           logger.debug("[DEBUG] Fetching assets from:", url);
 
@@ -97,18 +121,6 @@ const AssetLibrary = forwardRef<AssetLibraryRef, AssetLibraryProps>(
           logger.debug("[DEBUG] Library data received:", data);
           logger.debug("[DEBUG] Number of assets:", data.assets?.length || 0);
 
-          if (data.assets && data.assets.length > 0) {
-            logger.debug("[DEBUG] First asset:", data.assets[0]);
-            logger.debug(
-              "[DEBUG] Asset IDs:",
-              data.assets.map((a: any) => a.id),
-            );
-          } else {
-            logger.debug(
-              "[DEBUG] No assets returned - backend may not be saving generated images",
-            );
-          }
-
           setAssets(data.assets || []);
           setFilteredAssets(data.assets || []);
         } catch (error) {
@@ -123,7 +135,7 @@ const AssetLibrary = forwardRef<AssetLibraryRef, AssetLibraryProps>(
           setIsLoading(false);
         }
       },
-      [toast],
+      [toast, selectedFolderId],
     );
 
     // Expose refresh function to parent
@@ -138,15 +150,23 @@ const AssetLibrary = forwardRef<AssetLibraryRef, AssetLibraryProps>(
       [fetchAssets],
     );
 
-    // Load assets when panel opens
+    // Load assets and folders when panel opens
     useEffect(() => {
       if (open) {
-        logger.debug("[AssetLibrary] Panel opened, fetching assets");
+        logger.debug("[AssetLibrary] Panel opened, fetching assets and folders");
+        fetchAssets();
+        fetchFolders();
+      }
+    }, [open, fetchAssets, fetchFolders]);
+
+    // Re-fetch assets when selected folder changes
+    useEffect(() => {
+      if (open) {
         fetchAssets();
       }
-    }, [open, fetchAssets]);
+    }, [selectedFolderId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Filter assets based on selected filter
+    // Filter assets based on selected type filter
     useEffect(() => {
       if (filter === "all") {
         setFilteredAssets(assets);
@@ -174,7 +194,6 @@ const AssetLibrary = forwardRef<AssetLibraryRef, AssetLibraryProps>(
           throw new Error(`Failed to delete asset: ${response.status}`);
         }
 
-        // Remove from local state
         setAssets(assets.filter((asset) => asset.id !== id));
         toast({
           title: "Asset deleted",
@@ -213,6 +232,80 @@ const AssetLibrary = forwardRef<AssetLibraryRef, AssetLibraryProps>(
       }
     };
 
+    // Move asset to folder
+    const handleMoveAsset = async (assetId: string, folderId: string | null) => {
+      try {
+        await moveAssetToFolder(assetId, folderId);
+        setAssets((prev) =>
+          prev.map((a) => (a.id === assetId ? { ...a, folder_id: folderId } : a))
+        );
+        // If we're filtered to a specific folder, remove the moved asset from view
+        if (selectedFolderId !== "all") {
+          setFilteredAssets((prev) => prev.filter((a) => a.id !== assetId));
+          setAssets((prev) => prev.filter((a) => a.id !== assetId));
+        }
+        toast({ title: "Moved to folder" });
+      } catch (error) {
+        toast({
+          title: "Failed to move asset",
+          description: error instanceof Error ? error.message : "Unknown error",
+          variant: "destructive",
+        });
+      }
+    };
+
+    // Download folder as zip
+    const handleDownloadFolderZip = async () => {
+      if (selectedFolderId === "all" || isDownloadingZip) return;
+      setIsDownloadingZip(true);
+      try {
+        const user = auth.currentUser;
+        const token = await user?.getIdToken();
+        const res = await fetch(API_ENDPOINTS.folders.downloadZip(selectedFolderId), {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) throw new Error(`Failed to download: ${res.status}`);
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        const folder = folders.find((f) => f.id === selectedFolderId);
+        link.download = `${folder?.name ?? "folder"}.zip`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(url);
+      } catch (error) {
+        toast({
+          title: "Download failed",
+          description: error instanceof Error ? error.message : "Unknown error",
+          variant: "destructive",
+        });
+      } finally {
+        setIsDownloadingZip(false);
+      }
+    };
+
+    // Delete folder
+    const handleDeleteFolder = async (folderId: string) => {
+      try {
+        await deleteFolder(folderId);
+        // If we were viewing the deleted folder, go back to all
+        if (selectedFolderId === folderId) {
+          setSelectedFolderId("all");
+        }
+        toast({ title: "Folder deleted", description: "Assets moved to Uncategorized" });
+      } catch (error) {
+        toast({
+          title: "Failed to delete folder",
+          description: error instanceof Error ? error.message : "Unknown error",
+          variant: "destructive",
+        });
+      } finally {
+        setDeletingFolderId(null);
+      }
+    };
+
     // Handle asset drag start
     const handleAssetDragStart = useCallback(
       (event: React.DragEvent, asset: Asset) => {
@@ -223,14 +316,11 @@ const AssetLibrary = forwardRef<AssetLibraryRef, AssetLibraryProps>(
           url: asset.url,
           mimeType: asset.mime_type,
         };
-
-        // Set drag data
         event.dataTransfer.setData(
           "application/asset",
           JSON.stringify(payload),
         );
         event.dataTransfer.effectAllowed = "copy";
-
         logger.debug("[AssetLibrary] Drag started:", payload);
       },
       [],
@@ -253,7 +343,7 @@ const AssetLibrary = forwardRef<AssetLibraryRef, AssetLibraryProps>(
         <Sheet open={open} onOpenChange={onOpenChange}>
           <SheetContent
             side="right"
-            className="w-full sm:max-w-2xl overflow-y-auto"
+            className="w-full sm:max-w-3xl overflow-y-auto"
           >
             <SheetHeader>
               <SheetTitle>Asset Library</SheetTitle>
@@ -262,153 +352,230 @@ const AssetLibrary = forwardRef<AssetLibraryRef, AssetLibraryProps>(
               </SheetDescription>
             </SheetHeader>
 
-            {/* Refresh Button */}
-            <div className="mt-4">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => fetchAssets()}
-                disabled={isLoading}
-                className="w-full"
-              >
-                <RefreshCw
-                  className={`w-4 h-4 mr-2 ${isLoading ? "animate-spin" : ""}`}
-                />
-                Refresh Library
-              </Button>
-            </div>
+            <div className="flex mt-4 gap-4 h-[calc(100%-5rem)]">
+              {/* Folder Sidebar */}
+              <FolderSidebar
+                folders={folders}
+                selectedFolderId={selectedFolderId}
+                onSelectFolder={setSelectedFolderId}
+                onCreateFolder={async (name) => {
+                  try {
+                    await createFolder(name);
+                    toast({ title: `Folder "${name}" created` });
+                  } catch (error) {
+                    toast({
+                      title: "Failed to create folder",
+                      description: error instanceof Error ? error.message : "Unknown error",
+                      variant: "destructive",
+                    });
+                  }
+                }}
+                onRenameFolder={async (id, name) => {
+                  try {
+                    await renameFolder(id, name);
+                  } catch (error) {
+                    toast({
+                      title: "Failed to rename folder",
+                      description: error instanceof Error ? error.message : "Unknown error",
+                      variant: "destructive",
+                    });
+                  }
+                }}
+                onDeleteFolder={(id) => setDeletingFolderId(id)}
+                onDropAsset={(assetId, folderId) => handleMoveAsset(assetId, folderId)}
+              />
 
-            {/* Filters */}
-            <Tabs
-              value={filter}
-              onValueChange={(v) => setFilter(v as any)}
-              className="mt-4"
-            >
-              <TabsList className="grid w-full grid-cols-3">
-                <TabsTrigger value="all">All</TabsTrigger>
-                <TabsTrigger value="image">Images</TabsTrigger>
-                <TabsTrigger value="video">Videos</TabsTrigger>
-              </TabsList>
+              {/* Main content */}
+              <div className="flex-1 overflow-y-auto flex flex-col min-w-0">
+                {/* Toolbar */}
+                <div className="flex gap-2 mb-4">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => fetchAssets()}
+                    disabled={isLoading}
+                    className="flex-1"
+                  >
+                    <RefreshCw
+                      className={`w-4 h-4 mr-2 ${isLoading ? "animate-spin" : ""}`}
+                    />
+                    Refresh
+                  </Button>
+                  {selectedFolderId !== "all" && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleDownloadFolderZip}
+                      disabled={isDownloadingZip || filteredAssets.length === 0}
+                      title="Download folder as zip"
+                    >
+                      {isDownloadingZip ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Archive className="w-4 h-4" />
+                      )}
+                    </Button>
+                  )}
+                </div>
 
-              <TabsContent value={filter} className="mt-6">
-                {isLoading ? (
-                  <div className="flex items-center justify-center h-64">
-                    <Loader2 className="w-8 h-8 animate-spin text-primary" />
-                  </div>
-                ) : filteredAssets.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center h-64 text-muted-foreground">
-                    <p className="text-lg font-medium mb-2">No assets yet</p>
-                    <p className="text-sm">
-                      {filter === "all"
-                        ? "Generate images or videos and save them to your library"
-                        : `Generate ${filter}s and save them to your library`}
-                    </p>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {filteredAssets.map((asset) => (
-                      <div
-                        key={asset.id}
-                        className="bg-card border border-border rounded-lg overflow-hidden hover:shadow-lg transition-shadow"
-                      >
-                        {/* Thumbnail */}
-                        <div
-                          className="relative aspect-video bg-muted cursor-grab active:cursor-grabbing"
-                          draggable
-                          onDragStart={(e) => handleAssetDragStart(e, asset)}
-                          onClick={() => setPreviewAsset(asset)}
-                        >
-                          {asset.asset_type === "image" ? (
-                            <img
-                              src={asset.url}
-                              alt={asset.prompt}
-                              className="w-full h-full object-cover"
-                              onError={(e) => {
-                                console.error(
-                                  "[AssetLibrary] Image failed to load:",
-                                  asset.url,
-                                );
-                                e.currentTarget.src =
-                                  'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="100" height="100"%3E%3Crect fill="%23ddd" width="100" height="100"/%3E%3Ctext x="50" y="50" text-anchor="middle" fill="%23999" font-family="monospace" font-size="12"%3EError%3C/text%3E%3C/svg%3E';
-                              }}
-                            />
-                          ) : (
-                            <video
-                              src={asset.url}
-                              className="w-full h-full object-cover"
-                              onError={() => {
-                                console.error(
-                                  "[AssetLibrary] Video failed to load:",
-                                  asset.url,
-                                );
-                              }}
-                            />
-                          )}
-                          {/* Type Badge */}
-                          <div className="absolute top-2 right-2 bg-background/80 backdrop-blur-sm rounded-full p-1.5">
-                            {asset.asset_type === "image" ? (
-                              <ImageIcon className="w-4 h-4" />
-                            ) : (
-                              <VideoIcon className="w-4 h-4" />
-                            )}
-                          </div>
-                        </div>
+                {/* Filters */}
+                <Tabs
+                  value={filter}
+                  onValueChange={(v) => setFilter(v as any)}
+                >
+                  <TabsList className="grid w-full grid-cols-3">
+                    <TabsTrigger value="all">All</TabsTrigger>
+                    <TabsTrigger value="image">Images</TabsTrigger>
+                    <TabsTrigger value="video">Videos</TabsTrigger>
+                  </TabsList>
 
-                        {/* Info */}
-                        <div className="p-3 space-y-2">
-                          <p className="text-sm font-medium line-clamp-2">
-                            {asset.prompt || "No prompt"}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            {formatDate(asset.created_at)}
-                          </p>
-
-                          {/* Actions */}
-                          <div className="flex gap-2">
-                            {onAddAssetNode && (
-                              <Button
-                                size="sm"
-                                variant="default"
-                                onClick={() => {
-                                  onAddAssetNode(asset);
-                                  toast({
-                                    title: "Added to workflow",
-                                    description:
-                                      "Asset node created on the canvas",
-                                  });
-                                }}
-                                className="flex-1"
-                              >
-                                Add to Workflow
-                              </Button>
-                            )}
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => handleDownload(asset)}
-                              className={onAddAssetNode ? "" : "flex-1"}
-                            >
-                              <Download className="w-3 h-3 mr-1" />
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="destructive"
-                              onClick={() => setDeleteId(asset.id)}
-                            >
-                              <Trash2 className="w-3 h-3" />
-                            </Button>
-                          </div>
-                        </div>
+                  <TabsContent value={filter} className="mt-6">
+                    {isLoading ? (
+                      <div className="flex items-center justify-center h-64">
+                        <Loader2 className="w-8 h-8 animate-spin text-primary" />
                       </div>
-                    ))}
-                  </div>
-                )}
-              </TabsContent>
-            </Tabs>
+                    ) : filteredAssets.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center h-64 text-muted-foreground">
+                        <p className="text-lg font-medium mb-2">No assets yet</p>
+                        <p className="text-sm">
+                          {filter === "all"
+                            ? "Generate images or videos and save them to your library"
+                            : `Generate ${filter}s and save them to your library`}
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {filteredAssets.map((asset) => (
+                          <div
+                            key={asset.id}
+                            className="bg-card border border-border rounded-lg overflow-hidden hover:shadow-lg transition-shadow"
+                          >
+                            {/* Thumbnail */}
+                            <div
+                              className="relative aspect-video bg-muted cursor-grab active:cursor-grabbing"
+                              draggable
+                              onDragStart={(e) => handleAssetDragStart(e, asset)}
+                              onClick={() => setPreviewAsset(asset)}
+                            >
+                              {asset.asset_type === "image" ? (
+                                <img
+                                  src={asset.url}
+                                  alt={asset.prompt}
+                                  className="w-full h-full object-cover"
+                                  onError={(e) => {
+                                    console.error(
+                                      "[AssetLibrary] Image failed to load:",
+                                      asset.url,
+                                    );
+                                    e.currentTarget.src =
+                                      'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="100" height="100"%3E%3Crect fill="%23ddd" width="100" height="100"/%3E%3Ctext x="50" y="50" text-anchor="middle" fill="%23999" font-family="monospace" font-size="12"%3EError%3C/text%3E%3C/svg%3E';
+                                  }}
+                                />
+                              ) : (
+                                <video
+                                  src={asset.url}
+                                  className="w-full h-full object-cover"
+                                  onError={() => {
+                                    console.error(
+                                      "[AssetLibrary] Video failed to load:",
+                                      asset.url,
+                                    );
+                                  }}
+                                />
+                              )}
+                              {/* Type Badge */}
+                              <div className="absolute top-2 right-2 bg-background/80 backdrop-blur-sm rounded-full p-1.5">
+                                {asset.asset_type === "image" ? (
+                                  <ImageIcon className="w-4 h-4" />
+                                ) : (
+                                  <VideoIcon className="w-4 h-4" />
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Info */}
+                            <div className="p-3 space-y-2">
+                              <p className="text-sm font-medium line-clamp-2">
+                                {asset.prompt || "No prompt"}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                {formatDate(asset.created_at)}
+                              </p>
+
+                              {/* Actions */}
+                              <div className="flex gap-2">
+                                {onAddAssetNode && (
+                                  <Button
+                                    size="sm"
+                                    variant="default"
+                                    onClick={() => {
+                                      onAddAssetNode(asset);
+                                      toast({
+                                        title: "Added to workflow",
+                                        description:
+                                          "Asset node created on the canvas",
+                                      });
+                                    }}
+                                    className="flex-1"
+                                  >
+                                    Add to Workflow
+                                  </Button>
+                                )}
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleDownload(asset)}
+                                  className={onAddAssetNode ? "" : "flex-1"}
+                                >
+                                  <Download className="w-3 h-3 mr-1" />
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="destructive"
+                                  onClick={() => setDeleteId(asset.id)}
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </Button>
+                              </div>
+
+                              {/* Folder selector */}
+                              {folders.length > 0 && (
+                                <Select
+                                  value={asset.folder_id ?? "__unset__"}
+                                  onValueChange={(val) =>
+                                    handleMoveAsset(asset.id, val === "__remove__" ? null : val)
+                                  }
+                                >
+                                  <SelectTrigger className="h-7 text-xs">
+                                    <SelectValue placeholder="Add to folder…" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {asset.folder_id && (
+                                      <SelectItem value="__remove__">
+                                        Remove from folder
+                                      </SelectItem>
+                                    )}
+                                    {folders.map((f) => (
+                                      <SelectItem key={f.id} value={f.id}>
+                                        {f.name}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </TabsContent>
+                </Tabs>
+              </div>
+            </div>
           </SheetContent>
         </Sheet>
 
-        {/* Delete Confirmation Dialog */}
+        {/* Delete Asset Confirmation */}
         <AlertDialog open={!!deleteId} onOpenChange={() => setDeleteId(null)}>
           <AlertDialogContent>
             <AlertDialogHeader>
@@ -425,6 +592,33 @@ const AssetLibrary = forwardRef<AssetLibraryRef, AssetLibraryProps>(
                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               >
                 Delete
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Delete Folder Confirmation */}
+        <AlertDialog
+          open={!!deletingFolderId}
+          onOpenChange={() => setDeletingFolderId(null)}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete Folder?</AlertDialogTitle>
+              <AlertDialogDescription>
+                All assets in this folder will be moved to Uncategorized. The
+                assets themselves will not be deleted.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() =>
+                  deletingFolderId && handleDeleteFolder(deletingFolderId)
+                }
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                Delete Folder
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
