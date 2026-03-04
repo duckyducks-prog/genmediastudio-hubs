@@ -3,7 +3,7 @@ from uuid import uuid4
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from app.routers import generation, library, health, workflow, elevenlabs, video_processing
+from app.routers import generation, library, health, workflow, elevenlabs, video_processing, folders
 from app.logging_config import setup_logger
 from app.exceptions import AppError
 
@@ -145,7 +145,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
     expose_headers=["X-Request-ID"],  # Allow frontend to read this header
 )
@@ -158,6 +158,7 @@ app.include_router(health.router, tags=["health"])
 # To add v2 in future: create new router files and mount with prefix="/v2/..."
 app.include_router(generation.router, prefix="/v1/generate", tags=["generation"])
 app.include_router(library.router, prefix="/v1/assets", tags=["assets"])
+app.include_router(folders.router, prefix="/v1/folders", tags=["folders"])
 app.include_router(workflow.router, prefix="/v1/workflows", tags=["workflows"])
 app.include_router(elevenlabs.router, tags=["elevenlabs"])
 app.include_router(video_processing.router, tags=["video-processing"])

@@ -51,21 +51,40 @@ export const API_ENDPOINTS = {
   // Assets endpoints
   assets: {
     save: `${VEO_API_BASE_URL}/v1/assets`,
-    list: (assetType?: string) =>
-      assetType
-        ? `${VEO_API_BASE_URL}/v1/assets?asset_type=${assetType}`
-        : `${VEO_API_BASE_URL}/v1/assets`,
+    list: (assetType?: string, folderId?: string) => {
+      const params = new URLSearchParams();
+      if (assetType) params.set("asset_type", assetType);
+      if (folderId) params.set("folder_id", folderId);
+      const qs = params.toString();
+      return qs ? `${VEO_API_BASE_URL}/v1/assets?${qs}` : `${VEO_API_BASE_URL}/v1/assets`;
+    },
     get: (id: string) => `${VEO_API_BASE_URL}/v1/assets/${id}`,
     delete: (id: string) => `${VEO_API_BASE_URL}/v1/assets/${id}`,
+    moveToFolder: (assetId: string, folderId: string | null) => {
+      const base = `${VEO_API_BASE_URL}/v1/assets/${assetId}/folder`;
+      return folderId ? `${base}?folder_id=${folderId}` : base;
+    },
+  },
+
+  // Folder endpoints
+  folders: {
+    list: `${VEO_API_BASE_URL}/v1/folders`,
+    create: `${VEO_API_BASE_URL}/v1/folders`,
+    rename: (id: string) => `${VEO_API_BASE_URL}/v1/folders/${id}`,
+    delete: (id: string) => `${VEO_API_BASE_URL}/v1/folders/${id}`,
+    downloadZip: (id: string) => `${VEO_API_BASE_URL}/v1/folders/${id}/download`,
   },
 
   // Legacy library alias for backward compatibility during migration
   library: {
     save: `${VEO_API_BASE_URL}/v1/assets`,
-    list: (assetType?: string) =>
-      assetType
-        ? `${VEO_API_BASE_URL}/v1/assets?asset_type=${assetType}`
-        : `${VEO_API_BASE_URL}/v1/assets`,
+    list: (assetType?: string, folderId?: string) => {
+      const params = new URLSearchParams();
+      if (assetType) params.set("asset_type", assetType);
+      if (folderId) params.set("folder_id", folderId);
+      const qs = params.toString();
+      return qs ? `${VEO_API_BASE_URL}/v1/assets?${qs}` : `${VEO_API_BASE_URL}/v1/assets`;
+    },
     get: (id: string) => `${VEO_API_BASE_URL}/v1/assets/${id}`,
     delete: (id: string) => `${VEO_API_BASE_URL}/v1/assets/${id}`,
   },

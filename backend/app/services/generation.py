@@ -291,14 +291,17 @@ class GenerationService:
         
         # Save to library (don't retry this part)
         save_errors = []
+        saved_asset_id = None
         for img_data in images:
             try:
-                await self.library.save_asset(
+                asset_response = await self.library.save_asset(
                     data=img_data,
                     asset_type="image",
                     user_id=user_id,
                     prompt=prompt
                 )
+                if saved_asset_id is None:
+                    saved_asset_id = asset_response.id
             except Exception as e:
                 error_msg = f"{type(e).__name__}: {e}"
                 logger.error(f"Failed to save image to library: {error_msg}")
@@ -309,10 +312,11 @@ class GenerationService:
             return ImageResponse(
                 images=images,
                 saved_to_library=False,
-                save_error=f"Failed to save {len(save_errors)} image(s): {save_errors[0]}"
+                save_error=f"Failed to save {len(save_errors)} image(s): {save_errors[0]}",
+                saved_asset_id=saved_asset_id,
             )
 
-        return ImageResponse(images=images, saved_to_library=True)
+        return ImageResponse(images=images, saved_to_library=True, saved_asset_id=saved_asset_id)
 
     async def generate_video(
         self,
@@ -654,7 +658,8 @@ class GenerationService:
         self,
         image: str,
         upscale_factor: str = "x2",
-        output_mime_type: str = "image/png"
+        output_mime_type: str = "image/png",
+        user_id: Optional[str] = None,
     ) -> UpscaleResponse:
         """Upscale an image using Imagen"""
         endpoint = f"https://{settings.location}-aiplatform.googleapis.com/v1/projects/{settings.project_id}/locations/{settings.location}/publishers/google/models/{settings.upscale_model}:predict"
@@ -687,7 +692,30 @@ class GenerationService:
             upscaled_image = predictions[0].get("bytesBase64Encoded", "")
             mime_type = predictions[0].get("mimeType", output_mime_type)
             if upscaled_image:
-                return UpscaleResponse(image=upscaled_image, mime_type=mime_type)
+                saved_to_library = False
+                save_error = None
+                saved_asset_id = None
+                if user_id:
+                    try:
+                        asset_response = await self.library.save_asset(
+                            data=upscaled_image,
+                            asset_type="image",
+                            user_id=user_id,
+                            prompt=f"Upscaled {upscale_factor}",
+                            mime_type=mime_type,
+                        )
+                        saved_to_library = True
+                        saved_asset_id = asset_response.id
+                    except Exception as e:
+                        save_error = f"Failed to save upscaled image: {str(e)}"
+                        logger.error(f"Library save failed for upscale (user={user_id}): {e}")
+                return UpscaleResponse(
+                    image=upscaled_image,
+                    mime_type=mime_type,
+                    saved_to_library=saved_to_library,
+                    save_error=save_error,
+                    saved_asset_id=saved_asset_id,
+                )
 
         raise NoContentGeneratedError("upscaled image")
 

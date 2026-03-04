@@ -148,6 +148,15 @@ function ImageOutputNode({ data, id }: NodeProps<OutputNodeData>) {
         // Update to upscaled image
         const mimeType = result.mime_type || "image/png";
         setCurrentImageUrl(`data:${mimeType};base64,${result.image}`);
+        if (result.saved_to_library) {
+          toast({ title: "Image upscaled", description: "Saved to your library." });
+        } else {
+          toast({
+            title: "Image upscaled",
+            description: result.save_error || "Could not save to library.",
+            variant: "destructive",
+          });
+        }
       } else {
         throw new Error("No image returned from upscale API");
       }

@@ -133,6 +133,12 @@ class AssetNotFoundError(ResourceNotFoundError):
         super().__init__(resource_type="Asset", resource_id=asset_id)
 
 
+class FolderNotFoundError(ResourceNotFoundError):
+    """Raised when a folder doesn't exist"""
+    def __init__(self, folder_id: str):
+        super().__init__(resource_type="Folder", resource_id=folder_id)
+
+
 class WorkflowNotFoundError(ResourceNotFoundError):
     """Raised when a workflow doesn't exist"""
     def __init__(self, workflow_id: str):

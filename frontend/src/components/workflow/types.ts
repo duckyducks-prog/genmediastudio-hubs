@@ -259,6 +259,7 @@ export interface GenerateImageNodeData extends BaseNodeData {
   referenceImageUrls?: string[]; // Resolved URLs (computed by backend)
 
   aspectRatio: "1:1" | "16:9" | "9:16" | "3:4" | "4:3";
+  savedAssetId?: string | null;
 }
 
 // LLM node

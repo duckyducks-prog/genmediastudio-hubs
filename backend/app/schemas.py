@@ -68,6 +68,10 @@ class SaveAssetRequest(BaseModel):
     asset_type: str = Field(..., pattern=r'^(image|video)$')
     prompt: Optional[str] = Field(default=None, max_length=MAX_PROMPT_LENGTH)
     mime_type: Optional[str] = Field(default=None, max_length=100)
+    folder_id: Optional[str] = None
+
+class FolderRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
 
 # ============== RESPONSE MODELS ==============
 
@@ -75,6 +79,7 @@ class ImageResponse(BaseModel):
     images: List[str]
     saved_to_library: bool = True  # False if auto-save to library failed
     save_error: Optional[str] = None  # Error message if save failed
+    saved_asset_id: Optional[str] = None  # ID of the saved asset in the library
 
 class TextResponse(BaseModel):
     response: str
@@ -82,6 +87,9 @@ class TextResponse(BaseModel):
 class UpscaleResponse(BaseModel):
     image: str
     mime_type: str
+    saved_to_library: bool = True
+    save_error: Optional[str] = None
+    saved_asset_id: Optional[str] = None  # ID of the saved asset in the library
 
 class MusicResponse(BaseModel):
     audio_base64: str
@@ -96,6 +104,18 @@ class AssetResponse(BaseModel):
     created_at: str
     mime_type: str
     user_id: Optional[str] = None
+    folder_id: Optional[str] = None
+
+class FolderResponse(BaseModel):
+    id: str
+    name: str
+    user_id: str
+    created_at: str
+    asset_count: int = 0
+
+class FolderListResponse(BaseModel):
+    folders: List[FolderResponse]
+    count: int
 
 class VideoStatusResponse(BaseModel):
     status: str
