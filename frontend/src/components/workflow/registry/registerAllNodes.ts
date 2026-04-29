@@ -5,7 +5,7 @@
 import "../nodes/PromptInputNode.register";
 import "../nodes/ImageUploadNode.register";
 import "../nodes/VideoUploadNode.register";
-import "../nodes/ScriptQueueNode.register";
+import "../nodes/WorkflowQueueNode.register";
 
 // Modifier nodes - text
 import "../nodes/PromptConcatenatorNode.register";

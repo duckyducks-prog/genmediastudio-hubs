@@ -17,27 +17,32 @@ export async function executePrompt(
 }
 
 /**
- * Executor for ScriptQueue nodes.
- * Returns the current script from the queue based on the current index.
+ * Executor for WorkflowQueue nodes.
+ * Returns all items as an array with _isQueue flag for compound node detection.
  */
-export async function executeScriptQueue(
+export async function executeWorkflowQueue(
   node: WorkflowNode,
   _inputs: Record<string, any>,
   _ctx: ExecutionContext,
 ): Promise<ExecutionResult> {
-  const scripts = (node.data as any).scripts || [];
-  const currentIndex = (node.data as any).currentIndex || 0;
-  const currentScript = scripts[currentIndex] || "";
+  const items = (node.data as any).items || [];
 
-  if (scripts.length === 0) {
+  if (items.length === 0) {
     return {
       success: false,
-      error: "No scripts loaded. Paste scripts separated by --- into the Script Queue.",
+      error: "No items loaded. Paste items separated by --- into the Workflow Queue.",
     };
   }
 
-  logger.debug("[ScriptQueue] Returning script", currentIndex + 1, "of", scripts.length);
-  return { success: true, data: { text: currentScript } };
+  logger.debug("[WorkflowQueue] Returning", items.length, "queue items");
+  return {
+    success: true,
+    data: {
+      text: items,
+      _isQueue: true,
+      _count: items.length,
+    },
+  };
 }
 
 /**

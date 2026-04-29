@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     # Model names
     gemini_image_model: str = "gemini-3-pro-image-preview"  # Nano Banana Pro - Gemini 3 Pro Image
     gemini_text_model: str = "gemini-2.0-flash"  # Gemini 2.0 Flash model
-    veo_model: str = "veo-3.1-generate-preview"
+    veo_model: str = "veo-3.1-generate-001"
     upscale_model: str = "imagen-4.0-upscale-preview"
     lyria_model: str = "lyria-002"  # Google Lyria music generation model
 

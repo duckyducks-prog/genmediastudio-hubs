@@ -726,7 +726,7 @@ export async function pollVideoStatus(
   operationName: string,
   prompt: string = "",
   onProgress?: (attempts: number) => void,
-): Promise<{ success: boolean; videoUrl?: string; error?: string }> {
+): Promise<{ success: boolean; videoUrl?: string; gcsUrl?: string; error?: string }> {
   const maxAttempts = 30; // 5 minutes (30 * 10 seconds)
 
   // Fatal errors that should stop polling immediately (don't retry)
@@ -938,4 +938,79 @@ export async function pollVideoStatus(
     error:
       "Video generation timed out after 5 minutes. The operation may still be processing.",
   };
+}
+
+/**
+ * Stream video status via SSE (Server-Sent Events).
+ * Uses fetch + ReadableStream (not EventSource) because we need Authorization headers.
+ * Falls back gracefully — callers should catch errors and use pollVideoStatus instead.
+ */
+export async function streamVideoStatus(
+  operationName: string,
+  prompt: string = "",
+  onProgress?: (attempts: number) => void,
+): Promise<{ success: boolean; videoUrl?: string; gcsUrl?: string; error?: string }> {
+  const { auth } = await import("@/lib/firebase");
+  const user = auth.currentUser;
+  const token = await user?.getIdToken();
+
+  const url = API_ENDPOINTS.generate.videoStream(operationName, prompt);
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!response.ok) {
+    throw new Error(`SSE connection failed: ${response.status}`);
+  }
+
+  const reader = response.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let attemptCount = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const chunks = buffer.split("\n\n");
+      buffer = chunks.pop() || "";
+
+      for (const chunk of chunks) {
+        if (!chunk.startsWith("data: ")) continue;
+        const data = JSON.parse(chunk.slice(6));
+
+        if (data.status === "processing") {
+          attemptCount++;
+          onProgress?.(attemptCount);
+          continue;
+        }
+
+        if (data.status === "complete") {
+          const gcsUrl = data.video_url || data.videoUrl || null;
+          const videoData = data.video_base64 || data.videoBase64 || data.video;
+          if (videoData) {
+            const videoUrl =
+              typeof videoData === "string" && videoData.startsWith("data:")
+                ? videoData
+                : `data:video/mp4;base64,${videoData}`;
+            return { success: true, videoUrl, gcsUrl };
+          }
+          if (gcsUrl) {
+            return { success: true, videoUrl: gcsUrl, gcsUrl };
+          }
+          return { success: false, error: "Video complete but no data returned" };
+        }
+
+        if (data.status === "error") {
+          return { success: false, error: data.error || "Video generation failed" };
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  return { success: false, error: "SSE stream ended unexpectedly" };
 }

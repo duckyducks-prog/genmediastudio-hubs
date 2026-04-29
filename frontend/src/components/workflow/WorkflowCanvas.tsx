@@ -30,12 +30,18 @@ import {
   WorkflowNode,
   WorkflowEdge,
   NodeType,
+  ConnectorType,
+  CompoundNodeData,
+  getNodeConfiguration,
 } from "./types";
 import NodePalette from "./NodePalette";
 import WorkflowToolbar from "./WorkflowToolbar";
 import SaveWorkflowDialog from "./SaveWorkflowDialog";
 import WorkflowLoadDialog from "./WorkflowLoadDialog";
-import CreateWizardModal from "./CreateWizardModal";
+import CompoundBreadcrumb, { CompoundNavEntry } from "./CompoundBreadcrumb";
+import { CompoundInputPicker } from "./CompoundInputPicker";
+import { ImportWorkflowAsNodeDialog } from "./ImportWorkflowAsNodeDialog";
+import { CompoundNodeDefinition } from "@/lib/compound-nodes/types";
 import { useWorkflowExecution } from "./useWorkflowExecution";
 import { validateConnection, getConnectorType } from "./connectionValidation";
 import { useToast } from "@/hooks/use-toast";
@@ -92,6 +98,10 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
     } | null>(null);
     const [isReadOnly, setIsReadOnly] = useState(false);
     const [isSearchOpen, setIsSearchOpen] = useState(false);
+    const [parallelExecution, setParallelExecution] = useState(false);
+    // Compound node navigation stack (for navigate-into editing)
+    const [compoundNavStack, setCompoundNavStack] = useState<CompoundNavEntry[]>([]);
+    const isInsideCompound = compoundNavStack.length > 0;
 
     // Text edit side panel state
     const [textEditPanel, setTextEditPanel] = useState<{
@@ -935,14 +945,13 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
       isExecuting,
       executionProgress,
       totalNodes,
-      isBatchMode,
-      batchProgress,
     } = useWorkflowExecution(
       nodes,
       edges,
       setNodes,
       setEdges,
       onAssetGenerated,
+      parallelExecution,
     );
 
     // Copy selected nodes
@@ -1211,6 +1220,336 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
       return () => window.removeEventListener("keydown", handleKeyDown);
     }, [copySelectedNodes, pasteNodes, copyNodeConfig, pasteNodeConfig, nodes, setNodes, setEdges, toast, isReadOnly]);
 
+    // Import workflow as compound node state
+    const [importWorkflow, setImportWorkflow] = useState<{
+      id: string;
+      name: string;
+    } | null>(null);
+
+    // Compound creation state: holds pending data while input picker is open
+    const [compoundPickerData, setCompoundPickerData] = useState<{
+      sourceNodes: Array<{ nodeId: string; label: string; type: ConnectorType }>;
+      selectedNodes: WorkflowNode[];
+      selectedIds: Set<string>;
+      incomingEdges: Edge[];
+      outgoingEdges: Edge[];
+      internalEdges: Edge[];
+    } | null>(null);
+
+    // Step 1: Analyze selection and open the input picker dialog
+    const createCompoundFromSelection = useCallback(() => {
+      const selectedNodes = nodes.filter((n) => n.selected);
+      if (selectedNodes.length < 2) {
+        toast({
+          title: "Select Nodes",
+          description: "Select 2 or more nodes to create a compound node.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const selectedIds = new Set(selectedNodes.map((n) => n.id));
+
+      // Classify edges
+      const incomingEdges: Edge[] = [];
+      const outgoingEdges: Edge[] = [];
+      const internalEdges: Edge[] = [];
+
+      for (const edge of edges) {
+        const srcInside = selectedIds.has(edge.source);
+        const tgtInside = selectedIds.has(edge.target);
+        if (srcInside && tgtInside) {
+          internalEdges.push(edge);
+        } else if (!srcInside && tgtInside) {
+          incomingEdges.push(edge);
+        } else if (srcInside && !tgtInside) {
+          outgoingEdges.push(edge);
+        }
+      }
+
+      // Find source nodes (category: "input") not already covered by boundary edges
+      const nodesWithBoundaryInput = new Set(incomingEdges.map((e) => e.target));
+      const sourceNodes: Array<{ nodeId: string; label: string; type: ConnectorType }> = [];
+      for (const node of selectedNodes) {
+        if (nodesWithBoundaryInput.has(node.id)) continue;
+        const config = getNodeConfiguration(node.type as NodeType);
+        if (!config || config.category !== "input") continue;
+        if (config.outputConnectors.length === 0) continue;
+        sourceNodes.push({
+          nodeId: node.id,
+          label: node.data?.customLabel || config.label || (node.type as string),
+          type: config.outputConnectors[0].type,
+        });
+      }
+
+      // If there are source nodes to pick from, show the picker
+      if (sourceNodes.length > 0) {
+        setCompoundPickerData({
+          sourceNodes,
+          selectedNodes,
+          selectedIds,
+          incomingEdges,
+          outgoingEdges,
+          internalEdges,
+        });
+        return;
+      }
+
+      // No source nodes to pick — create compound directly
+      finalizeCompound([], selectedNodes, selectedIds, incomingEdges, outgoingEdges, internalEdges);
+    }, [nodes, edges, toast]);
+
+    // Step 2: Build and insert the compound node
+    const finalizeCompound = useCallback((
+      variableInputNodeIds: string[],
+      selectedNodes: WorkflowNode[],
+      selectedIds: Set<string>,
+      incomingEdges: Edge[],
+      outgoingEdges: Edge[],
+      internalEdges: Edge[],
+    ) => {
+      const variableSet = new Set(variableInputNodeIds);
+
+      // Build input handles
+      const compoundInputs: Array<{ id: string; label: string; type: ConnectorType }> = [];
+      const inputMappings: Record<string, { nodeId: string; inputHandle: string }> = {};
+      const inputRewireEdges: Array<{ edgeSourceId: string; edgeSourceHandle: string; compoundHandleId: string }> = [];
+
+      // From boundary edges (outside → inside)
+      for (const edge of incomingEdges) {
+        const targetNode = selectedNodes.find((n) => n.id === edge.target) as WorkflowNode | undefined;
+        const handleId = `in_${compoundInputs.length}`;
+        const connType = (targetNode ? getConnectorType(targetNode, edge.targetHandle, false) : null) || ConnectorType.Any;
+        compoundInputs.push({
+          id: handleId,
+          label: `${targetNode?.data?.customLabel || targetNode?.type || "Input"} - ${edge.targetHandle || "input"}`,
+          type: connType,
+        });
+        inputMappings[handleId] = { nodeId: edge.target, inputHandle: edge.targetHandle || "" };
+        inputRewireEdges.push({ edgeSourceId: edge.source, edgeSourceHandle: edge.sourceHandle || "", compoundHandleId: handleId });
+      }
+
+      // From user-selected variable source nodes
+      for (const nodeId of variableInputNodeIds) {
+        const node = selectedNodes.find((n) => n.id === nodeId);
+        if (!node) continue;
+        const config = getNodeConfiguration(node.type as NodeType);
+        if (!config || config.outputConnectors.length === 0) continue;
+        const handleId = `in_${compoundInputs.length}`;
+        compoundInputs.push({
+          id: handleId,
+          label: node.data?.customLabel || config.label || (node.type as string),
+          type: config.outputConnectors[0].type,
+        });
+        inputMappings[handleId] = { nodeId: node.id, inputHandle: "__source__" };
+      }
+
+      // Build output handles
+      const compoundOutputs: Array<{ id: string; label: string; type: ConnectorType }> = [];
+      const outputMappings: Record<string, { nodeId: string; outputHandle: string }> = {};
+      const outputRewireEdges: Array<{ edgeTargetId: string; edgeTargetHandle: string; compoundHandleId: string }> = [];
+
+      // From boundary edges (inside → outside)
+      for (const edge of outgoingEdges) {
+        const sourceNode = selectedNodes.find((n) => n.id === edge.source) as WorkflowNode | undefined;
+        const handleId = `out_${compoundOutputs.length}`;
+        const connType = (sourceNode ? getConnectorType(sourceNode, edge.sourceHandle, true) : null) || ConnectorType.Any;
+        compoundOutputs.push({
+          id: handleId,
+          label: `${sourceNode?.data?.customLabel || sourceNode?.type || "Output"} - ${edge.sourceHandle || "output"}`,
+          type: connType,
+        });
+        outputMappings[handleId] = { nodeId: edge.source, outputHandle: edge.sourceHandle || "" };
+        outputRewireEdges.push({ edgeTargetId: edge.target, edgeTargetHandle: edge.targetHandle || "", compoundHandleId: handleId });
+      }
+
+      // Auto-detect terminal outputs: nodes with output connectors that have
+      // no outgoing internal edges from those handles
+      const internalSourceHandles = new Set(
+        internalEdges.map((e) => `${e.source}:${e.sourceHandle || ""}`)
+      );
+      const nodesWithBoundaryOutput = new Set(outgoingEdges.map((e) => e.source));
+      for (const node of selectedNodes) {
+        if (nodesWithBoundaryOutput.has(node.id)) continue;
+        if (variableSet.has(node.id)) continue; // Don't also make source nodes into outputs
+        const config = getNodeConfiguration(node.type as NodeType);
+        if (!config) continue;
+        for (const output of config.outputConnectors) {
+          const key = `${node.id}:${output.id}`;
+          if (!internalSourceHandles.has(key)) {
+            const handleId = `out_${compoundOutputs.length}`;
+            compoundOutputs.push({
+              id: handleId,
+              label: `${node.data?.customLabel || config.label || node.type} - ${output.label}`,
+              type: output.type,
+            });
+            outputMappings[handleId] = { nodeId: node.id, outputHandle: output.id };
+          }
+        }
+      }
+
+      // Calculate position (center of selected nodes)
+      const avgX = selectedNodes.reduce((sum, n) => sum + (n.position?.x || 0), 0) / selectedNodes.length;
+      const avgY = selectedNodes.reduce((sum, n) => sum + (n.position?.y || 0), 0) / selectedNodes.length;
+
+      // Create the compound node
+      const compoundId = `compound_${Date.now()}`;
+      const compoundNode: WorkflowNode = {
+        id: compoundId,
+        type: NodeType.Compound,
+        position: { x: avgX, y: avgY },
+        data: {
+          label: "Compound",
+          status: "ready",
+          name: `Compound (${selectedNodes.length} nodes)`,
+          icon: "📦",
+          description: "",
+          inputs: compoundInputs.map((h) => ({
+            id: h.id,
+            label: h.label,
+            type: h.type,
+            required: false,
+            acceptsMultiple: false,
+          })),
+          outputs: compoundOutputs.map((h) => ({
+            id: h.id,
+            label: h.label,
+            type: h.type,
+          })),
+          controls: [],
+          controlValues: {},
+          internalWorkflow: {
+            nodes: JSON.parse(JSON.stringify(selectedNodes)),
+            edges: JSON.parse(JSON.stringify(internalEdges)),
+          },
+          mappings: {
+            inputs: inputMappings,
+            controls: {},
+            outputs: outputMappings,
+          },
+          compoundId,
+        } as CompoundNodeData,
+      };
+
+      // Remove selected nodes and their edges, add compound node
+      const remainingNodes = nodes.filter((n) => !selectedIds.has(n.id));
+      const remainingEdges = edges.filter((e) => {
+        return !selectedIds.has(e.source) && !selectedIds.has(e.target);
+      });
+
+      // Reconnect boundary edges to compound handles
+      const newEdges: Edge[] = [];
+      for (const rewire of inputRewireEdges) {
+        newEdges.push({
+          id: `e_${rewire.edgeSourceId}_${compoundId}_${rewire.compoundHandleId}`,
+          source: rewire.edgeSourceId,
+          sourceHandle: rewire.edgeSourceHandle,
+          target: compoundId,
+          targetHandle: rewire.compoundHandleId,
+        });
+      }
+      for (const rewire of outputRewireEdges) {
+        newEdges.push({
+          id: `e_${compoundId}_${rewire.edgeTargetId}_${rewire.compoundHandleId}`,
+          source: compoundId,
+          sourceHandle: rewire.compoundHandleId,
+          target: rewire.edgeTargetId,
+          targetHandle: rewire.edgeTargetHandle,
+        });
+      }
+
+      setNodes([...remainingNodes, compoundNode]);
+      setEdges([...remainingEdges, ...newEdges]);
+
+      toast({
+        title: "Compound Node Created",
+        description: `${selectedNodes.length} nodes collapsed into a compound node. Double-click to expand.`,
+      });
+    }, [nodes, edges, setNodes, setEdges, toast]);
+
+    // Compound node navigation: enter into a compound node's internal workflow
+    const enterCompoundNode = useCallback(
+      (nodeId: string) => {
+        const node = nodes.find((n) => n.id === nodeId);
+        if (!node || node.type !== NodeType.Compound) return;
+
+        const compoundData = node.data as any;
+        const internalWorkflow = compoundData.internalWorkflow;
+        if (!internalWorkflow?.nodes || !internalWorkflow?.edges) return;
+
+        // Push current state onto nav stack
+        setCompoundNavStack((prev) => [
+          ...prev,
+          {
+            parentNodes: JSON.parse(JSON.stringify(nodes)),
+            parentEdges: JSON.parse(JSON.stringify(edges)),
+            compoundNodeId: nodeId,
+            label: compoundData.name || "Compound Node",
+          },
+        ]);
+
+        // Load internal workflow onto canvas
+        setNodes(JSON.parse(JSON.stringify(internalWorkflow.nodes)));
+        setEdges(JSON.parse(JSON.stringify(internalWorkflow.edges)));
+
+        // Fit view after loading
+        setTimeout(() => reactFlowInstance?.fitView({ padding: 0.2 }), 100);
+      },
+      [nodes, edges, setNodes, setEdges, reactFlowInstance],
+    );
+
+    // Compound node navigation: navigate back to a specific level
+    const navigateToLevel = useCallback(
+      (targetLevel: number) => {
+        if (compoundNavStack.length === 0) return;
+
+        // Save current canvas state back into the compound node we're inside
+        let currentNodes = JSON.parse(JSON.stringify(nodes));
+        let currentEdges = JSON.parse(JSON.stringify(edges));
+
+        // Walk backwards from current level, saving changes at each level
+        const newStack = [...compoundNavStack];
+        while (newStack.length > targetLevel + 1) {
+          const entry = newStack.pop()!;
+          // Find the compound node in the parent and update its internal workflow
+          const parentNodes = entry.parentNodes.map((n: any) => {
+            if (n.id === entry.compoundNodeId) {
+              return {
+                ...n,
+                data: {
+                  ...n.data,
+                  internalWorkflow: {
+                    nodes: currentNodes,
+                    edges: currentEdges,
+                  },
+                },
+              };
+            }
+            return n;
+          });
+          currentNodes = parentNodes;
+          currentEdges = entry.parentEdges;
+        }
+
+        setCompoundNavStack(newStack);
+        setNodes(currentNodes);
+        setEdges(currentEdges);
+
+        setTimeout(() => reactFlowInstance?.fitView({ padding: 0.2 }), 100);
+      },
+      [compoundNavStack, nodes, edges, setNodes, setEdges, reactFlowInstance],
+    );
+
+    // Handle double-click on nodes (enter compound nodes)
+    const handleNodeDoubleClick = useCallback(
+      (_event: React.MouseEvent, node: WorkflowNode) => {
+        if (node.type === NodeType.Compound) {
+          enterCompoundNode(node.id);
+        }
+      },
+      [enterCompoundNode],
+    );
+
     // Context menu handlers
     const handleNodeContextMenu = useCallback(
       (event: React.MouseEvent, node: WorkflowNode) => {
@@ -1459,6 +1798,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
           <div className="shrink-0">
             <NodePalette
               onAddNode={addNode}
+              onImportWorkflow={(id, name) => setImportWorkflow({ id, name })}
             />
           </div>
         )}
@@ -1534,6 +1874,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
             onDragOver={onDragOver}
             onMoveEnd={handleMoveEnd}
             onNodeContextMenu={handleNodeContextMenu}
+            onNodeDoubleClick={handleNodeDoubleClick}
             isValidConnection={isValidConnection}
             nodeTypes={nodeTypes}
             connectionMode={ConnectionMode.Loose}
@@ -1572,16 +1913,24 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
               onAbortWorkflow={abortWorkflow}
               onResetWorkflow={resetWorkflow}
               onSaveWorkflow={handleSaveWorkflow}
+              onSaveAsNode={createCompoundFromSelection}
               onLoadWorkflow={handleLoadWorkflow}
               isExecuting={isExecuting}
               executionProgress={executionProgress}
               totalNodes={totalNodes}
               isReadOnly={isReadOnly}
-              isBatchMode={isBatchMode}
-              batchProgress={batchProgress}
+              isInsideCompound={isInsideCompound}
+              parallelExecution={parallelExecution}
+              onToggleParallelExecution={() => setParallelExecution(prev => !prev)}
             />
             <FloatingLabels nodes={nodes} />
           </ReactFlow>
+
+          {/* Compound node breadcrumb navigation */}
+          <CompoundBreadcrumb
+            navStack={compoundNavStack}
+            onNavigateToLevel={navigateToLevel}
+          />
 
           {/* Node context menu */}
           {contextMenu && (
@@ -1606,6 +1955,100 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
                 setNodes((nds) => nds.map((n) => ({ ...n, selected: n.id === nodeId })));
                 setTimeout(() => pasteNodeConfig(), 0);
               }}
+              onCreateCompound={createCompoundFromSelection}
+              hasMultipleSelected={nodes.filter((n) => n.selected).length >= 2}
+            />
+          )}
+
+          {/* Compound input picker dialog */}
+          {compoundPickerData && (
+            <CompoundInputPicker
+              open={true}
+              sourceNodes={compoundPickerData.sourceNodes}
+              onConfirm={(selectedNodeIds) => {
+                const data = compoundPickerData;
+                setCompoundPickerData(null);
+                finalizeCompound(
+                  selectedNodeIds,
+                  data.selectedNodes,
+                  data.selectedIds,
+                  data.incomingEdges,
+                  data.outgoingEdges,
+                  data.internalEdges,
+                );
+              }}
+              onCancel={() => setCompoundPickerData(null)}
+            />
+          )}
+
+          {/* Import workflow as compound node dialog */}
+          {importWorkflow && (
+            <ImportWorkflowAsNodeDialog
+              open={true}
+              workflowId={importWorkflow.id}
+              workflowName={importWorkflow.name}
+              onConfirm={(definition: CompoundNodeDefinition) => {
+                setImportWorkflow(null);
+
+                // Get viewport center for placement
+                const bounds = reactFlowWrapper.current?.getBoundingClientRect();
+                let position = { x: 400, y: 300 };
+                if (bounds && reactFlowInstance) {
+                  const center = reactFlowInstance.project({
+                    x: bounds.width / 2,
+                    y: bounds.height / 2,
+                  });
+                  position = { x: center.x - 100, y: center.y - 50 };
+                }
+
+                const compoundId = `compound_${Date.now()}`;
+                const newNode: WorkflowNode = {
+                  id: compoundId,
+                  type: NodeType.Compound,
+                  position,
+                  data: {
+                    label: definition.name,
+                    status: "ready",
+                    name: definition.name,
+                    icon: definition.icon,
+                    description: definition.description,
+                    inputs: definition.inputs.map((i) => ({
+                      id: i.id,
+                      label: i.name,
+                      type: i.type,
+                      required: false,
+                      acceptsMultiple: false,
+                    })),
+                    outputs: definition.outputs.map((o) => ({
+                      id: o.id,
+                      label: o.name,
+                      type: o.type,
+                    })),
+                    controls: definition.controls.map((c) => ({
+                      id: c.id,
+                      label: c.name,
+                      type: c.type === "slider" ? "number" as const
+                        : c.type === "dropdown" ? "select" as const
+                        : "text" as const,
+                      default: c.default,
+                      ...(c.options ? { options: c.options } : {}),
+                    })),
+                    controlValues: Object.fromEntries(
+                      definition.controls.map((c) => [c.id, c.default]),
+                    ),
+                    internalWorkflow: definition.internalWorkflow,
+                    mappings: definition.mappings as any,
+                    compoundId: definition.id,
+                  } as CompoundNodeData,
+                };
+
+                setNodes((nds) => [...nds, newNode]);
+                toast({
+                  title: "Workflow Imported",
+                  description: `"${definition.name}" added as a compound node.`,
+                });
+              }}
+              onCancel={() => setImportWorkflow(null)}
             />
           )}
 
@@ -1691,7 +2134,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
           onOpenChange={setIsLoadDialogOpen}
           onLoadWorkflow={loadWorkflow}
         />
-
 
         {/* Node Search Dialog */}
         <NodeSearchDialog

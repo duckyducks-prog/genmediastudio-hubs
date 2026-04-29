@@ -4,7 +4,7 @@ import { NodeExecutor } from "./types";
 // Input executors
 import {
   executePrompt,
-  executeScriptQueue,
+  executeWorkflowQueue,
   executeImageInput,
   executeVideoInput,
 } from "./inputExecutors";
@@ -59,7 +59,7 @@ import {
 export const executorMap = new Map<NodeType, NodeExecutor>([
   // Input nodes
   [NodeType.Prompt, executePrompt],
-  [NodeType.ScriptQueue, executeScriptQueue],
+  [NodeType.WorkflowQueue, executeWorkflowQueue],
   [NodeType.ImageInput, executeImageInput],
   [NodeType.VideoInput, executeVideoInput],
 

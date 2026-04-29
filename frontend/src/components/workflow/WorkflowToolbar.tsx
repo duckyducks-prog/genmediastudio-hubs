@@ -10,6 +10,7 @@ import {
   Save,
   List,
   StopCircle,
+  Package,
 } from "lucide-react";
 import { useReactFlow } from "reactflow";
 import { useWorkflow } from "@/contexts/WorkflowContext";
@@ -21,13 +22,15 @@ interface WorkflowToolbarProps {
   onAbortWorkflow: () => void;
   onResetWorkflow: () => void;
   onSaveWorkflow: () => void;
+  onSaveAsNode: () => void;
   onLoadWorkflow: () => void;
   isExecuting: boolean;
   executionProgress?: Map<string, string>;
   totalNodes?: number;
   isReadOnly?: boolean;
-  isBatchMode?: boolean;
-  batchProgress?: { current: number; total: number };
+  isInsideCompound?: boolean;
+  parallelExecution?: boolean;
+  onToggleParallelExecution?: () => void;
 }
 
 export default function WorkflowToolbar({
@@ -36,13 +39,15 @@ export default function WorkflowToolbar({
   onAbortWorkflow,
   onResetWorkflow,
   onSaveWorkflow,
+  onSaveAsNode,
   onLoadWorkflow,
   isExecuting,
   executionProgress: _executionProgress,
   totalNodes: _totalNodes,
   isReadOnly = false,
-  isBatchMode = false,
-  batchProgress,
+  isInsideCompound = false,
+  parallelExecution = false,
+  onToggleParallelExecution,
 }: WorkflowToolbarProps) {
   const { zoomIn, zoomOut, fitView } = useReactFlow();
   const { state } = useWorkflow();
@@ -87,10 +92,22 @@ export default function WorkflowToolbar({
         variant="default"
         size="icon"
         className="h-8 w-8"
-        title={isReadOnly ? "Read-Only Template" : "Save Workflow"}
-        disabled={isReadOnly}
+        title={isReadOnly ? "Read-Only Template" : isInsideCompound ? "Inside Compound Node" : "Save Workflow"}
+        disabled={isReadOnly || isInsideCompound}
       >
         <Save className="w-3.5 h-3.5" />
+      </Button>
+
+      <Button
+        onClick={onSaveAsNode}
+        variant="outline"
+        size="sm"
+        className="h-8 px-2"
+        title="Save as reusable compound node"
+        disabled={isReadOnly || isInsideCompound}
+      >
+        <Package className="w-3.5 h-3.5 mr-1" />
+        <span className="text-xs">Save as Node</span>
       </Button>
 
       <Button
@@ -100,6 +117,7 @@ export default function WorkflowToolbar({
         className="h-8 w-8"
         title="Load Workflow"
         aria-label="Load Workflow"
+        disabled={isInsideCompound}
       >
         <List className="w-3.5 h-3.5" />
       </Button>
@@ -109,6 +127,19 @@ export default function WorkflowToolbar({
       <ThemeToggle />
 
       <div className="w-px h-6 bg-border mx-0.5" />
+
+      <button
+        onClick={onToggleParallelExecution}
+        disabled={isExecuting}
+        className={`h-7 px-2 rounded text-[10px] font-medium transition-colors ${
+          parallelExecution
+            ? "bg-primary/20 text-primary border border-primary/40"
+            : "bg-muted text-muted-foreground border border-transparent hover:bg-muted/80"
+        } ${isExecuting ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+        title={parallelExecution ? "Parallel: API nodes run simultaneously (faster, may hit rate limits)" : "Sequential: API nodes run one at a time (safer for complex workflows)"}
+      >
+        {parallelExecution ? "Parallel" : "Sequential"}
+      </button>
 
       <Button
         onClick={onExecuteWorkflow}
@@ -123,11 +154,7 @@ export default function WorkflowToolbar({
         ) : (
           <Play className="w-3.5 h-3.5 mr-1" />
         )}
-        {isExecuting
-          ? isBatchMode && batchProgress
-            ? `Batch ${batchProgress.current}/${batchProgress.total}`
-            : "Running"
-          : "Run All"}
+        {isExecuting ? "Running" : "Run All"}
       </Button>
 
       {isExecuting && (

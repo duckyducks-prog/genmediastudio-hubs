@@ -11,7 +11,6 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { isApiError } from "@/lib/api-error";
 import { logger } from "@/lib/logger";
 import Index from "./pages/Index";
-import WizardPage from "./pages/WizardPage";
 import NotFound from "./pages/NotFound";
 import { OfflineBanner } from "@/components/OfflineBanner";
 
@@ -55,7 +54,6 @@ const App = () => (
           <BrowserRouter>
             <Routes>
               <Route path="/" element={<Index />} />
-              <Route path="/wizard/:id" element={<WizardPage />} />
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route path="*" element={<NotFound />} />
             </Routes>

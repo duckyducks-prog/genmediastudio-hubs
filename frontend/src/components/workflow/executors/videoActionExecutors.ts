@@ -4,6 +4,25 @@ import { FilterConfig } from "@/lib/pixi-filter-configs";
 import { ExecutionResult, ExecutionContext } from "./types";
 import { WorkflowNode, validateMutualExclusion } from "../types";
 
+/** Load a video URL and return its duration in seconds */
+function getVideoDuration(url: string): Promise<number> {
+  return new Promise((resolve) => {
+    const video = document.createElement("video");
+    video.preload = "metadata";
+    video.crossOrigin = "anonymous";
+    video.onloadedmetadata = () => {
+      const duration = video.duration;
+      video.src = "";
+      resolve(duration && isFinite(duration) ? duration : 0);
+    };
+    video.onerror = () => {
+      video.src = "";
+      resolve(0);
+    };
+    video.src = url;
+  });
+}
+
 export async function executeGenerateVideo(
   node: WorkflowNode,
   inputs: Record<string, any>,
@@ -356,17 +375,38 @@ export async function executeGenerateVideo(
       };
     }
 
-    // Poll for video completion using helper
-    const result = await ctx.pollVideoStatus(
-      apiData.operation_name,
-      prompt || "",
-      (attempts) => {
-        // Update node with poll progress
-        ctx.updateNodeState(node.id, "executing", {
-          pollAttempts: attempts,
-        });
-      },
-    );
+    // Prefer SSE streaming for real-time status, fall back to polling
+    const onProgress = (attempts: number) => {
+      ctx.updateNodeState(node.id, "executing", {
+        pollAttempts: attempts,
+      });
+    };
+
+    let result;
+    if (ctx.streamVideoStatus) {
+      try {
+        result = await ctx.streamVideoStatus(
+          apiData.operation_name,
+          prompt || "",
+          onProgress,
+        );
+      } catch {
+        // SSE failed (e.g. network issue, backend doesn't support it yet)
+        // Fall back to polling
+        logger.debug("[GenerateVideo] SSE failed, falling back to polling");
+        result = await ctx.pollVideoStatus(
+          apiData.operation_name,
+          prompt || "",
+          onProgress,
+        );
+      }
+    } else {
+      result = await ctx.pollVideoStatus(
+        apiData.operation_name,
+        prompt || "",
+        onProgress,
+      );
+    }
 
     if (result.success && result.videoUrl) {
       // Backend auto-saves videos to library with prompt metadata
@@ -938,13 +978,37 @@ export async function executeVideoSegmentReplace(
   try {
     logger.debug("[VideoSegmentReplace] Replacing video segment");
 
+    const nodeData = node.data as any;
+    const timelineMode = nodeData.timelineMode || "seconds";
+
+    let startTime = nodeData.startTime ?? 0;
+    let endTime = nodeData.endTime ?? 10;
+
+    // In percentage mode, detect actual video duration and convert
+    if (timelineMode === "percentage") {
+      const actualDuration = await getVideoDuration(baseVideo);
+      if (!actualDuration || actualDuration <= 0) {
+        return {
+          success: false,
+          error: "Could not detect base video duration for percentage conversion",
+        };
+      }
+      const startPct = nodeData.startPercent ?? 0;
+      const endPct = nodeData.endPercent ?? 100;
+      startTime = Math.round((startPct / 100) * actualDuration * 10) / 10;
+      endTime = Math.round((endPct / 100) * actualDuration * 10) / 10;
+      logger.debug(
+        `[VideoSegmentReplace] Percentage mode: ${startPct}%-${endPct}% → ${startTime}s-${endTime}s (duration: ${actualDuration}s)`
+      );
+    }
+
     const token = await ctx.getAuthToken();
 
     const requestBody: any = {
-      start_time: (node.data as any).startTime ?? 0,
-      end_time: (node.data as any).endTime ?? 10,
-      audio_mode: (node.data as any).audioMode || "keep_base",
-      fit_mode: (node.data as any).fitMode || "trim",
+      start_time: startTime,
+      end_time: endTime,
+      audio_mode: nodeData.audioMode || "keep_base",
+      fit_mode: nodeData.fitMode || "trim",
     };
 
     if (baseVideo.startsWith("data:")) {

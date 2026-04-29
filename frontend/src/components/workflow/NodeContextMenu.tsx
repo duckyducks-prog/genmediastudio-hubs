@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Trash2, Copy, Tag, X, Settings, ClipboardPaste } from "lucide-react";
+import { Trash2, Copy, Tag, X, Settings, ClipboardPaste, Package } from "lucide-react";
 
 interface NodeContextMenuProps {
   x: number;
@@ -12,6 +12,8 @@ interface NodeContextMenuProps {
   onSetLabel: (nodeId: string, label: string | undefined) => void;
   onCopyConfig?: (nodeId: string) => void;
   onPasteConfig?: (nodeId: string) => void;
+  onCreateCompound?: () => void;
+  hasMultipleSelected?: boolean;
 }
 
 export function NodeContextMenu({
@@ -25,6 +27,8 @@ export function NodeContextMenu({
   onSetLabel,
   onCopyConfig,
   onPasteConfig,
+  onCreateCompound,
+  hasMultipleSelected = false,
 }: NodeContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [isEditingLabel, setIsEditingLabel] = useState(false);
@@ -96,6 +100,14 @@ export function NodeContextMenu({
       icon: ClipboardPaste,
       onClick: () => {
         onPasteConfig(nodeId);
+        onClose();
+      },
+    }] : []),
+    ...(onCreateCompound && hasMultipleSelected ? [{
+      label: "Create Compound Node",
+      icon: Package,
+      onClick: () => {
+        onCreateCompound();
         onClose();
       },
     }] : []),

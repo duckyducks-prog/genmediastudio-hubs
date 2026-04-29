@@ -10,7 +10,7 @@ export enum NodeType {
   ImageInput = "imageInput",
   VideoInput = "videoInput",
   Prompt = "prompt", // Also known as "Text Input"
-  ScriptQueue = "scriptQueue", // Batch input for multiple scripts
+  WorkflowQueue = "workflowQueue", // Queue of items for batch compound execution
 
   // OUTPUT nodes for text
   TextOutput = "textOutput", // Display text output (e.g., from LLM)
@@ -134,25 +134,12 @@ export interface PromptNodeData extends BaseNodeData {
   prompt: string;
 }
 
-// Result from a single batch iteration
-export interface BatchIterationResult {
-  index: number;
-  scriptPreview: string; // First 50 chars of the script
-  success: boolean;
-  videoUrl?: string; // Final video URL from terminal node
-  error?: string;
-  timestamp: number;
-}
-
-// SCRIPT QUEUE node - batch input for multiple scripts
-export interface ScriptQueueNodeData extends BaseNodeData {
-  scripts: string[]; // Array of scripts to process
-  batchInput: string; // Raw text input (user pastes multiple scripts here)
-  separator: "---" | "newline" | "custom"; // How to split scripts
+// WORKFLOW QUEUE node - queue of items for batch compound execution
+export interface WorkflowQueueNodeData extends BaseNodeData {
+  items: string[]; // Parsed items (scripts/texts)
+  rawInput: string; // Raw textarea content
+  separator: "---" | "newline" | "custom"; // How to split items
   customSeparator?: string; // Custom separator string
-  currentIndex: number; // Current script being processed (0-indexed)
-  isProcessing: boolean; // Is batch processing in progress
-  collectedResults?: BatchIterationResult[]; // Collected outputs from each iteration
 }
 
 // Music duration options
@@ -347,6 +334,9 @@ export interface VideoSegmentReplaceNodeData extends BaseNodeData {
   audioMode: "keep_base" | "keep_replacement" | "mix";
   fitMode: "stretch" | "trim" | "loop";
   baseDuration?: number; // Auto-detected from input video
+  timelineMode: "seconds" | "percentage";
+  startPercent: number;
+  endPercent: number;
 }
 
 // EXTRACT LAST FRAME node
@@ -440,7 +430,7 @@ export type WorkflowNodeData =
   | ImageInputNodeData
   | VideoInputNodeData
   | PromptNodeData
-  | ScriptQueueNodeData
+  | WorkflowQueueNodeData
   | GenerateMusicNodeData
   | VoiceChangerNodeData
   | MergeVideosNodeData
@@ -536,16 +526,16 @@ export const NODE_CONFIGURATIONS: Record<NodeType, NodeConfiguration> = {
     ],
   },
 
-  [NodeType.ScriptQueue]: {
-    type: NodeType.ScriptQueue,
-    label: "Script Queue",
+  [NodeType.WorkflowQueue]: {
+    type: NodeType.WorkflowQueue,
+    label: "Workflow Queue",
     category: "input",
-    description: "Batch input for multiple scripts - runs workflow for each",
+    description: "Queue of items for batch compound node execution",
     inputConnectors: [],
     outputConnectors: [
       {
         id: "text",
-        label: "Script",
+        label: "Queue Items",
         type: ConnectorType.Text,
       },
     ],

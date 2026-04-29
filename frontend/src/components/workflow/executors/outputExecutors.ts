@@ -162,15 +162,12 @@ export async function executeCompound(
 ): Promise<ExecutionResult> {
   logger.debug("[Compound] Executing compound node:", node.id);
 
-  // Create a workflow executor function with the expected signature
-  // This allows compound nodes to recursively execute their internal workflows
+  // Use the real sub-workflow executor from the execution context
   const internalWorkflowExecutor = async (
-    _internalNodes: WorkflowNode[],
-    _internalEdges: WorkflowEdge[],
+    internalNodes: WorkflowNode[],
+    internalEdges: WorkflowEdge[],
   ): Promise<{ success: boolean; data?: any; error?: string }> => {
-    // Execute the internal workflow nodes using the same execution logic
-    // For now, we return a basic implementation
-    return { success: true, data: {} };
+    return ctx.executeSubWorkflow(internalNodes, internalEdges);
   };
 
   // Execute the compound node's internal workflow

@@ -27,6 +27,8 @@ export const API_ENDPOINTS = {
     video: `${VEO_API_BASE_URL}/v1/generate/video`,
     videoStatus: (operationId: string, prompt: string) =>
       `${VEO_API_BASE_URL}/v1/generate/video/status?operation_id=${encodeURIComponent(operationId)}&prompt=${encodeURIComponent(prompt)}`,
+    videoStream: (operationId: string, prompt: string) =>
+      `${VEO_API_BASE_URL}/v1/generate/video/stream?operation_id=${encodeURIComponent(operationId)}&prompt=${encodeURIComponent(prompt)}`,
     text: `${VEO_API_BASE_URL}/v1/generate/text`,
     upscale: `${VEO_API_BASE_URL}/v1/generate/upscale`,
     music: `${VEO_API_BASE_URL}/v1/generate/music`,

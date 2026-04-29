@@ -25,10 +25,13 @@ import {
   Music,
   Mic,
   Scissors,
+  Package,
+  Loader2,
 } from "lucide-react";
 import { NodeType } from "./types";
 import { Input } from "@/components/ui/input";
 import { useState, useMemo } from "react";
+import { useMyWorkflows } from "@/lib/workflow-queries";
 
 interface PaletteNode {
   type: NodeType;
@@ -62,11 +65,11 @@ const paletteNodes: PaletteNode[] = [
     description: "Text input for AI generation",
   },
   {
-    type: NodeType.ScriptQueue,
-    label: "Script Queue",
+    type: NodeType.WorkflowQueue,
+    label: "Workflow Queue",
     icon: <ListOrdered className="w-4 h-4" />,
     category: "input",
-    description: "Batch input - run workflow for each script",
+    description: "Batch input - queue items for compound node iteration",
   },
 
   // MODIFIER NODES
@@ -267,12 +270,15 @@ const paletteNodes: PaletteNode[] = [
 
 interface NodePaletteProps {
   onAddNode: (type: NodeType) => void;
+  onImportWorkflow?: (workflowId: string, workflowName: string) => void;
 }
 
 export default function NodePalette({
   onAddNode,
+  onImportWorkflow,
 }: NodePaletteProps) {
   const [searchQuery, setSearchQuery] = useState("");
+  const { data: savedWorkflows, isLoading: workflowsLoading } = useMyWorkflows();
 
   const filteredNodes = useMemo(() => {
     if (!searchQuery.trim()) {
@@ -285,6 +291,17 @@ export default function NodePalette({
         node.description.toLowerCase().includes(query),
     );
   }, [searchQuery]);
+
+  const filteredWorkflows = useMemo(() => {
+    if (!savedWorkflows) return [];
+    if (!searchQuery.trim()) return savedWorkflows;
+    const query = searchQuery.toLowerCase();
+    return savedWorkflows.filter(
+      (w) =>
+        w.name.toLowerCase().includes(query) ||
+        (w.description && w.description.toLowerCase().includes(query)),
+    );
+  }, [savedWorkflows, searchQuery]);
 
   const categories = {
     input: filteredNodes.filter((n) => n.category === "input"),
@@ -466,9 +483,50 @@ export default function NodePalette({
         )}
 
 
+        {/* Saved Workflows */}
+        {(filteredWorkflows.length > 0 || workflowsLoading) && (
+          <div className="pr-4">
+            <h4 className="text-xs font-medium text-muted-foreground uppercase mb-2 tracking-wide">
+              Saved Workflows
+            </h4>
+            <p className="text-xs text-muted-foreground/70 mb-3">
+              Import as reusable compound node
+            </p>
+            {workflowsLoading ? (
+              <div className="flex items-center gap-2 py-3 text-xs text-muted-foreground">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                Loading...
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {filteredWorkflows.map((workflow) => (
+                  <button
+                    key={workflow.id}
+                    onClick={() =>
+                      onImportWorkflow?.(workflow.id!, workflow.name)
+                    }
+                    className="w-full flex items-start gap-2 p-3 rounded-lg bg-secondary/50 hover:bg-secondary border border-border transition-colors cursor-pointer group"
+                  >
+                    <div className="text-primary mt-0.5 group-hover:scale-110 transition-transform">
+                      <Package className="w-4 h-4" />
+                    </div>
+                    <div className="flex-1 text-left">
+                      <div className="text-sm font-medium">{workflow.name}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {workflow.description || `${workflow.node_count ?? "?"} nodes`}
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* No results message */}
         {searchQuery &&
-          filteredNodes.length === 0 && (
+          filteredNodes.length === 0 &&
+          filteredWorkflows.length === 0 && (
           <div className="pr-4 text-center py-8">
             <p className="text-sm text-muted-foreground">
               No nodes found matching "{searchQuery}"

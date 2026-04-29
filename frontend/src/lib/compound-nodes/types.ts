@@ -96,6 +96,7 @@ export interface CompoundNodeDefinition {
   // Metadata
   createdAt: string; // ISO timestamp
   updatedAt: string; // ISO timestamp
+  sourceWorkflowId?: string; // ID of the saved workflow this was imported from
 }
 
 /**

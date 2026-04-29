@@ -22,6 +22,11 @@ function formatTime(seconds: number): string {
   return `${mins}:${secs.toString().padStart(2, "0")}`;
 }
 
+// Format percentage
+function formatPercent(value: number): string {
+  return `${Math.round(value)}%`;
+}
+
 // Timeline Bar Component
 function TimelineBar({
   duration,
@@ -30,6 +35,7 @@ function TimelineBar({
   onStartChange,
   onEndChange,
   disabled,
+  mode = "seconds",
 }: {
   duration: number;
   startTime: number;
@@ -37,6 +43,7 @@ function TimelineBar({
   onStartChange: (time: number) => void;
   onEndChange: (time: number) => void;
   disabled?: boolean;
+  mode?: "seconds" | "percentage";
 }) {
   const barRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState<"start" | "end" | null>(null);
@@ -90,12 +97,14 @@ function TimelineBar({
   const startPercent = duration > 0 ? (startTime / duration) * 100 : 0;
   const endPercent = duration > 0 ? (endTime / duration) * 100 : 100;
 
+  const fmt = mode === "percentage" ? formatPercent : formatTime;
+
   return (
     <div className="space-y-1">
       {/* Time labels */}
       <div className="flex justify-between text-[10px] text-muted-foreground">
-        <span>0:00</span>
-        <span>{formatTime(duration)}</span>
+        <span>{mode === "percentage" ? "0%" : "0:00"}</span>
+        <span>{fmt(duration)}</span>
       </div>
 
       {/* Timeline bar */}
@@ -166,13 +175,13 @@ function TimelineBar({
       {/* Time indicators */}
       <div className="flex justify-between text-[10px]">
         <span className="text-primary font-medium">
-          Start: {formatTime(startTime)}
+          Start: {fmt(startTime)}
         </span>
         <span className="text-muted-foreground">
-          {formatTime(endTime - startTime)} segment
+          {fmt(endTime - startTime)} segment
         </span>
         <span className="text-primary font-medium">
-          End: {formatTime(endTime)}
+          End: {fmt(endTime)}
         </span>
       </div>
     </div>
@@ -187,6 +196,7 @@ function VideoSegmentReplaceNode({ data, id }: NodeProps<VideoSegmentReplaceNode
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [baseDuration, setBaseDuration] = useState(data.baseDuration || 30);
   const [replacementDuration, setReplacementDuration] = useState(0);
+  const timelineMode = data.timelineMode || "seconds";
   const [baseVideoUrl, setBaseVideoUrl] = useState<string | null>(null);
   const [replacementVideoUrl, setReplacementVideoUrl] = useState<string | null>(null);
   const renderRequestId = useRef(0);
@@ -374,19 +384,58 @@ function VideoSegmentReplaceNode({ data, id }: NodeProps<VideoSegmentReplaceNode
 
       {/* Timeline Bar */}
       <div className="mb-3">
-        <label className="text-xs font-medium text-muted-foreground block mb-2">
-          Timeline {baseDuration > 0 && <span className="text-primary">({formatTime(baseDuration)} base)</span>}
-        </label>
-        <TimelineBar
-          duration={baseDuration}
-          startTime={data.startTime}
-          endTime={data.endTime}
-          onStartChange={(time) => handleUpdate("startTime", time)}
-          onEndChange={(time) => handleUpdate("endTime", time)}
-          disabled={data.readOnly}
-        />
+        <div className="flex items-center justify-between mb-2">
+          <label className="text-xs font-medium text-muted-foreground">
+            Timeline {timelineMode === "seconds" && baseDuration > 0 && <span className="text-primary">({formatTime(baseDuration)} base)</span>}
+          </label>
+          <div className="flex rounded-md border border-border overflow-hidden">
+            <button
+              className={`px-2 py-0.5 text-[10px] transition-colors ${
+                timelineMode === "percentage"
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-muted text-muted-foreground hover:text-foreground"
+              }`}
+              onClick={() => handleUpdate("timelineMode", "percentage")}
+              disabled={data.readOnly}
+            >
+              %
+            </button>
+            <button
+              className={`px-2 py-0.5 text-[10px] transition-colors ${
+                timelineMode === "seconds"
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-muted text-muted-foreground hover:text-foreground"
+              }`}
+              onClick={() => handleUpdate("timelineMode", "seconds")}
+              disabled={data.readOnly}
+            >
+              sec
+            </button>
+          </div>
+        </div>
+        {timelineMode === "percentage" ? (
+          <TimelineBar
+            duration={100}
+            startTime={data.startPercent}
+            endTime={data.endPercent}
+            onStartChange={(val) => handleUpdate("startPercent", Math.round(val))}
+            onEndChange={(val) => handleUpdate("endPercent", Math.round(val))}
+            disabled={data.readOnly}
+            mode="percentage"
+          />
+        ) : (
+          <TimelineBar
+            duration={baseDuration}
+            startTime={data.startTime}
+            endTime={data.endTime}
+            onStartChange={(time) => handleUpdate("startTime", time)}
+            onEndChange={(time) => handleUpdate("endTime", time)}
+            disabled={data.readOnly}
+            mode="seconds"
+          />
+        )}
         {/* Replacement video info */}
-        {replacementDuration > 0 && (
+        {replacementDuration > 0 && timelineMode === "seconds" && (
           <div className="mt-2 text-[10px] text-purple-400">
             Replacement video: {formatTime(replacementDuration)} |
             Segment: {formatTime(data.endTime - data.startTime)}
@@ -398,6 +447,16 @@ function VideoSegmentReplaceNode({ data, id }: NodeProps<VideoSegmentReplaceNode
             )}
             {replacementDuration < (data.endTime - data.startTime) && data.fitMode === "stretch" && (
               <span className="text-blue-400 ml-1">(will stretch)</span>
+            )}
+          </div>
+        )}
+        {timelineMode === "percentage" && (
+          <div className="mt-2 text-[10px] text-muted-foreground">
+            Segment: {formatPercent(data.endPercent - data.startPercent)} of base video
+            {baseDuration > 0 && (
+              <span className="text-primary ml-1">
+                (~{formatTime((data.endPercent - data.startPercent) / 100 * baseDuration)})
+              </span>
             )}
           </div>
         )}

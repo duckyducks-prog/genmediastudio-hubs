@@ -269,7 +269,7 @@ class GenerationService:
                 response_modalities=["IMAGE", "TEXT"]
             )
             
-            response = image_client.models.generate_content(
+            response = await image_client.aio.models.generate_content(
                 model=settings.gemini_image_model,
                 contents=contents,
                 config=config

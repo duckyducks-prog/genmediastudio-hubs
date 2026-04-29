@@ -45,6 +45,11 @@ export interface ExecutionContext {
     prompt?: string,
     onProgress?: (attempts: number) => void,
   ) => Promise<{ success: boolean; videoUrl?: string; gcsUrl?: string; error?: string }>;
+  streamVideoStatus?: (
+    operationName: string,
+    prompt?: string,
+    onProgress?: (attempts: number) => void,
+  ) => Promise<{ success: boolean; videoUrl?: string; gcsUrl?: string; error?: string }>;
 
   // Execution utilities
   executeConcatenator: (
@@ -63,6 +68,10 @@ export interface ExecutionContext {
       edges: WorkflowEdge[],
     ) => Promise<{ success: boolean; data?: any; error?: string }>,
   ) => Promise<{ success: boolean; data?: any; error?: string }>;
+  executeSubWorkflow: (
+    nodes: WorkflowNode[],
+    edges: WorkflowEdge[],
+  ) => Promise<{ success: boolean; data?: any; nodes?: WorkflowNode[]; error?: string }>;
 }
 
 export type NodeExecutor = (

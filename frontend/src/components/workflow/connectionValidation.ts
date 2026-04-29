@@ -121,20 +121,34 @@ export function validateConnection(
 
   // Find the input connector configuration
   const targetHandle = connection.targetHandle || "default";
-  const inputConnector = targetConfig.inputConnectors.find(
-    (c) => c.id === targetHandle,
-  );
 
-  if (!inputConnector) {
-    return { valid: false, reason: "Input connector not found" };
+  // Compound nodes have dynamic connectors in node data, not in NODE_CONFIGURATIONS
+  let inputConnectorAcceptsMultiple = false;
+  if (targetNode.type === NodeType.Compound) {
+    const dynamicInputs = (targetNode.data as any).inputs;
+    const dynamicConnector = Array.isArray(dynamicInputs)
+      ? dynamicInputs.find((c: any) => c.id === targetHandle)
+      : null;
+    if (!dynamicConnector) {
+      return { valid: false, reason: "Input connector not found" };
+    }
+    inputConnectorAcceptsMultiple = dynamicConnector.acceptsMultiple ?? false;
+  } else {
+    const inputConnector = targetConfig.inputConnectors.find(
+      (c) => c.id === targetHandle,
+    );
+    if (!inputConnector) {
+      return { valid: false, reason: "Input connector not found" };
+    }
+    inputConnectorAcceptsMultiple = inputConnector.acceptsMultiple;
   }
 
   // Check if input accepts multiple connections
-  if (!inputConnector.acceptsMultiple) {
+  if (!inputConnectorAcceptsMultiple) {
     if (hasExistingConnection(targetNode.id, connection.targetHandle, edges)) {
       return {
         valid: false,
-        reason: `${inputConnector.label} only accepts one connection`,
+        reason: "This input only accepts one connection",
       };
     }
   }

@@ -181,22 +181,6 @@ function GenerateMusicNode({ data, id }: NodeProps<GenerateMusicNodeData>) {
 
       {/* Node Content */}
       <div className="space-y-3">
-        {/* Prompt Display (received via input connector) */}
-        <div>
-          <label className="text-xs font-medium text-muted-foreground block mb-1">
-            Music Description
-          </label>
-          {data.prompt ? (
-            <div className="bg-muted/50 p-2 rounded border border-border text-xs font-mono leading-relaxed break-words max-h-20 overflow-y-auto">
-              {data.prompt}
-            </div>
-          ) : (
-            <div className="bg-muted/30 p-2 rounded border border-dashed border-border text-xs text-muted-foreground">
-              Connect a Text Input to provide a prompt
-            </div>
-          )}
-        </div>
-
         {/* Duration Selector */}
         <div>
           <label className="text-xs font-medium text-muted-foreground block mb-2">

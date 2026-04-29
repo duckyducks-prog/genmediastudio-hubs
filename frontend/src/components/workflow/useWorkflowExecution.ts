@@ -1,10 +1,9 @@
 import { logger } from "@/lib/logger";
-import { useCallback, useState, useMemo } from "react";
+import { useCallback, useState, useMemo, useRef } from "react";
 import {
   WorkflowNode,
   WorkflowEdge,
   NodeType,
-  BatchIterationResult,
 } from "./types";
 import { toast } from "@/hooks/use-toast";
 import {
@@ -13,6 +12,7 @@ import {
   executeConcatenator,
   executeTextIterator,
   pollVideoStatus,
+  streamVideoStatus,
   groupNodesByLevel,
   findUpstreamDependencies,
   resolveAssetToDataUrl,
@@ -95,6 +95,7 @@ export function useWorkflowExecution(
     edges: WorkflowEdge[] | ((edges: WorkflowEdge[]) => WorkflowEdge[]),
   ) => void,
   onAssetGenerated?: () => void,
+  parallelExecution = false,
 ) {
   const [isExecuting, setIsExecuting] = useState(false);
   const [executionProgress, setExecutionProgress] = useState<
@@ -103,10 +104,10 @@ export function useWorkflowExecution(
   const [totalNodes, setTotalNodes] = useState(0);
   const [abortRequested, setAbortRequested] = useState(false);
 
-  // Batch execution state (for ScriptQueue)
-  const [isBatchMode, setIsBatchMode] = useState(false);
-  const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 });
-  const [batchResults, setBatchResults] = useState<Array<{ index: number; success: boolean; outputs?: any }>>([]);
+  // Batch execution state
+
+  // Ref to executeNode so we can use it in executeSubWorkflow without circular deps
+  const executeNodeRef = useRef<(node: WorkflowNode, inputs: any) => Promise<ExecutionResult>>();
 
   // Helper to animate edges connected to a node
   const setEdgeAnimated = useCallback(
@@ -312,9 +313,71 @@ export function useWorkflowExecution(
         return user.getIdToken();
       },
       pollVideoStatus: pollVideoStatus as ExecutionContext["pollVideoStatus"],
+      streamVideoStatus: streamVideoStatus as ExecutionContext["streamVideoStatus"],
       executeConcatenator,
       executeTextIterator,
       executeCompoundNode,
+      executeSubWorkflow: async (
+        subNodes: WorkflowNode[],
+        subEdges: WorkflowEdge[],
+      ) => {
+        const execNode = executeNodeRef.current;
+        if (!execNode) {
+          return { success: false, error: "executeNode not available" };
+        }
+
+        // Simple topological sort for the sub-workflow
+        const inDegree = new Map<string, number>();
+        const adj = new Map<string, string[]>();
+        for (const n of subNodes) {
+          inDegree.set(n.id, 0);
+          adj.set(n.id, []);
+        }
+        for (const e of subEdges) {
+          inDegree.set(e.target, (inDegree.get(e.target) || 0) + 1);
+          adj.get(e.source)?.push(e.target);
+        }
+
+        const queue: string[] = [];
+        for (const [id, deg] of inDegree) {
+          if (deg === 0) queue.push(id);
+        }
+
+        let trackedNodes = [...subNodes];
+        const order: string[] = [];
+
+        while (queue.length > 0) {
+          const nodeId = queue.shift()!;
+          order.push(nodeId);
+          for (const neighbor of adj.get(nodeId) || []) {
+            const newDeg = (inDegree.get(neighbor) || 1) - 1;
+            inDegree.set(neighbor, newDeg);
+            if (newDeg === 0) queue.push(neighbor);
+          }
+        }
+
+        // Execute nodes in topological order
+        for (const nodeId of order) {
+          const node = trackedNodes.find((n) => n.id === nodeId);
+          if (!node) continue;
+
+          const inputs = gatherNodeInputs(node, trackedNodes, subEdges);
+          const result = await execNode(node, inputs);
+
+          if (result.success && result.data) {
+            const updatedOutputs = result.data.outputs || result.data;
+            trackedNodes = trackedNodes.map((n) =>
+              n.id === nodeId
+                ? { ...n, data: { ...n.data, outputs: updatedOutputs, ...updatedOutputs } }
+                : n,
+            );
+          } else if (!result.success) {
+            return { success: false, error: result.error, nodes: trackedNodes };
+          }
+        }
+
+        return { success: true, data: {}, nodes: trackedNodes };
+      },
     }),
     [updateNodeState, onAssetGenerated],
   );
@@ -344,6 +407,9 @@ export function useWorkflowExecution(
     },
     [executionContext],
   );
+
+  // Keep ref in sync for use by executeSubWorkflow
+  executeNodeRef.current = executeNode;
 
   // Abort workflow execution
   const abortWorkflow = useCallback(() => {
@@ -386,198 +452,12 @@ export function useWorkflowExecution(
       return;
     }
 
-    // Check for ScriptQueue node (batch mode)
-    const scriptQueueNode = nodes.find((n) => n.type === NodeType.ScriptQueue);
-    const scripts = scriptQueueNode ? (scriptQueueNode.data as any).scripts || [] : [];
-    const batchMode = scriptQueueNode && scripts.length > 1;
-
-    // Identify post-batch aggregator nodes - these should run AFTER all batch iterations complete
-    // A post-batch node is one that:
-    // 1. Is an aggregator type (MergeVideos, AddMusicToVideo, VoiceChanger)
-    // 2. Has inputs that come from nodes IN THE BATCH ITERATION CHAIN
-    // The batch iteration chain: ScriptQueue → ... → GenerateVideo/GenerateImage
-    // These nodes need ALL iteration outputs, not just the current iteration's output
-    const postBatchNodeIds = new Set<string>();
-
-    // Track the actual batch iteration node (the one connected to ScriptQueue's output chain)
-    let batchIterationVideoNodeId: string | undefined;
-
-    if (batchMode && scriptQueueNode) {
-      // Find the node that receives ScriptQueue's text output (usually Prompt or GenerateVideo via chain)
-      // Then trace to find the video-producing node in the batch chain
-      const scriptQueueOutEdges = edges.filter(e => e.source === scriptQueueNode.id);
-
-      // Trace the chain from ScriptQueue to find GenerateVideo/GenerateImage
-      const findBatchVideoNode = (startNodeId: string, visited = new Set<string>()): string | undefined => {
-        if (visited.has(startNodeId)) return undefined;
-        visited.add(startNodeId);
-
-        const node = nodes.find(n => n.id === startNodeId);
-        if (!node) return undefined;
-
-        // Found a video-producing node
-        if (node.type === NodeType.GenerateVideo || node.type === NodeType.GenerateImage) {
-          return node.id;
-        }
-
-        // Continue tracing downstream
-        const outEdges = edges.filter(e => e.source === startNodeId);
-        for (const edge of outEdges) {
-          const result = findBatchVideoNode(edge.target, visited);
-          if (result) return result;
-        }
-
-        return undefined;
-      };
-
-      // Find the batch iteration video node starting from ScriptQueue
-      for (const edge of scriptQueueOutEdges) {
-        batchIterationVideoNodeId = findBatchVideoNode(edge.target);
-        if (batchIterationVideoNodeId) break;
-      }
-
-      logger.info(`[Batch] Batch iteration video node:`, {
-        nodeId: batchIterationVideoNodeId,
-        nodeType: batchIterationVideoNodeId ? nodes.find(n => n.id === batchIterationVideoNodeId)?.type : 'not found'
-      });
-
-      // Aggregator types that should run after batch completes
-      const aggregatorTypes = new Set([
-        NodeType.MergeVideos,
-        NodeType.AddMusicToVideo,
-        NodeType.VoiceChanger,
-      ]);
-
-      // Now identify post-batch nodes: aggregators that receive from the batch iteration video node
-      // OR any aggregator node that's downstream of the batch video node
-      if (batchIterationVideoNodeId) {
-        // Helper to check if a node is reachable from the batch video node
-        const isDownstreamOfBatchVideo = (nodeId: string, visited = new Set<string>()): boolean => {
-          if (visited.has(nodeId)) return false;
-          visited.add(nodeId);
-
-          if (nodeId === batchIterationVideoNodeId) return true;
-
-          // Check incoming edges
-          const inEdges = edges.filter(e => e.target === nodeId);
-          for (const edge of inEdges) {
-            if (isDownstreamOfBatchVideo(edge.source, visited)) return true;
-          }
-          return false;
-        };
-
-        for (const node of nodes) {
-          if (!aggregatorTypes.has(node.type as NodeType)) continue;
-
-          // Check if this aggregator is downstream of the batch video node
-          const isDownstream = isDownstreamOfBatchVideo(node.id);
-
-          logger.debug(`[Batch] Checking aggregator ${node.type} (${node.id}):`, {
-            isDownstreamOfBatchVideo: isDownstream,
-          });
-
-          if (isDownstream) {
-            postBatchNodeIds.add(node.id);
-            logger.info(`[Batch] Marked ${node.type} (${node.id}) as post-batch node`);
-
-            // Also add any nodes downstream of this post-batch node
-            const findDownstream = (nodeId: string) => {
-              const outEdges = edges.filter(e => e.source === nodeId);
-              for (const edge of outEdges) {
-                if (!postBatchNodeIds.has(edge.target)) {
-                  const downstreamNode = nodes.find(n => n.id === edge.target);
-                  postBatchNodeIds.add(edge.target);
-                  logger.info(`[Batch] Marked downstream ${downstreamNode?.type} (${edge.target}) as post-batch node`);
-                  findDownstream(edge.target);
-                }
-              }
-            };
-            findDownstream(node.id);
-          }
-        }
-      }
-
-      if (postBatchNodeIds.size > 0) {
-        logger.info(`[Batch] Total ${postBatchNodeIds.size} post-batch nodes identified`);
-      } else {
-        logger.warn(`[Batch] No post-batch nodes identified. Aggregator nodes will run during each iteration.`);
-      }
-    }
-
-    if (batchMode) {
-      setIsBatchMode(true);
-      setBatchProgress({ current: 0, total: scripts.length });
-      setBatchResults([]);
-      logger.info(`[Batch] Starting batch execution with ${scripts.length} scripts`);
-    }
-
     // Track total nodes for progress calculation
     setTotalNodes(executionOrder.length);
 
-    // Helper function to run a single workflow iteration
-    const runSingleIteration = async (iterationIndex: number = 0): Promise<{ completed: number; failed: number }> => {
-      // Update ScriptQueue node's currentIndex for this iteration and reset other nodes
-      // Use a Promise to get the latest state after update
-      let currentNodes: WorkflowNode[] = [];
-
-      if (scriptQueueNode && batchMode) {
-        logger.info(`[Batch] Starting iteration ${iterationIndex + 1} - clearing stale outputs from previous iteration`);
-        await new Promise<void>((resolve) => {
-          setNodes((prevNodes) => {
-            currentNodes = prevNodes.map((n) =>
-              n.id === scriptQueueNode.id
-                ? {
-                  ...n,
-                  data: {
-                    ...n.data,
-                    currentIndex: iterationIndex,
-                    isProcessing: true,
-                  },
-                }
-                : {
-                  ...n,
-                  data: {
-                    ...n.data,
-                    status: "ready", // Reset status for re-execution
-                    // Preserve outputs for static input nodes that don't change between iterations
-                    // These nodes provide constant data (like reference images) used by all iterations
-                    // Tag with execution ID to prevent stale data from previous runs being used
-                    outputs: [NodeType.ScriptQueue, NodeType.ImageInput, NodeType.VideoInput, NodeType.Prompt].includes(n.type as NodeType)
-                      ? {
-                        ...n.data.outputs,
-                        _executionId: executionId,
-                        _preservedAt: Date.now()
-                      }
-                      : {}, // Clear outputs for nodes that need re-execution
-                    error: undefined, // Clear any previous errors
-                    // CRITICAL: Clear stale execution results from previous iteration
-                    // These top-level fields can cause "Mixed URL and base64 formats" errors
-                    // when downstream nodes read old data via fallback instead of fresh outputs
-                    // BUT: Preserve them for static input nodes (ImageInput, VideoInput, Prompt)
-                    ...([NodeType.ImageInput, NodeType.VideoInput, NodeType.Prompt].includes(n.type as NodeType) ? {} : {
-                      video: undefined,
-                      videoUrl: undefined,
-                      gcsUrl: undefined,
-                      image: undefined,
-                      imageUrl: undefined,
-                      images: undefined,
-                      text: undefined,
-                      response: undefined,
-                      audio: undefined,
-                      audioUrl: undefined,
-                    }),
-                  },
-                }
-            );
-            // Schedule resolve after state update is processed
-            setTimeout(resolve, 100);
-            return currentNodes;
-          });
-        });
-      } else {
-        // Non-batch mode: use nodes directly
-        currentNodes = nodes;
-      }
+    // Helper function to run the workflow execution
+    const runWorkflowExecution = async (): Promise<{ completed: number; failed: number }> => {
+      const currentNodes: WorkflowNode[] = nodes;
 
       // Store executed node data
       const progress = new Map<string, string>();
@@ -665,19 +545,11 @@ export function useWorkflowExecution(
           break;
         }
 
-        // Filter out post-batch nodes during batch iterations - they run after all iterations
-        const levelNodes = levels[levelIndex].filter(n => !postBatchNodeIds.has(n.id));
-
-        // Skip this level if all nodes were filtered out
-        if (levelNodes.length === 0) {
-          logger.debug(`[Execution] Skipping level ${levelIndex} - all nodes are post-batch`);
-          continue;
-        }
+        const levelNodes = levels[levelIndex];
 
         // Log tracked nodes state at the start of each level
         logger.debug(`[Execution] 📊 Starting Level ${levelIndex}/${levels.length - 1}:`, {
           nodesInLevel: levelNodes.map((n) => ({ id: n.id, type: n.type })),
-          skippedPostBatchNodes: levels[levelIndex].filter(n => postBatchNodeIds.has(n.id)).map(n => ({ id: n.id, type: n.type })),
           trackedNodesWithOutputs: trackedNodes
             .filter((n) => n.data.outputs && Object.keys(n.data.outputs as object).length > 0)
             .map((n) => ({
@@ -762,137 +634,115 @@ export function useWorkflowExecution(
           }),
         );
 
-        // Execute API nodes sequentially (no delays)
-        const apiResults = [];
-        for (const node of apiNodes) {
-          progress.set(node.id, "executing");
-          setEdgeAnimated(node.id, true, false);
-          updateNodeState(node.id, "executing");
-          setExecutionProgress(new Map(progress));
+        // Execute API nodes - sequential by default, parallel when toggled on
+        let apiResults: PromiseSettledResult<any>[];
 
-          const inputs = getTrackedInputs(node.id);
+        if (parallelExecution) {
+          // Parallel mode with concurrency limit
+          const MAX_CONCURRENT_API_CALLS = 3;
+          let activeCount = 0;
+          const waiting: (() => void)[] = [];
 
-          // Diagnostic log for input gathering verification
-          logger.debug(`[Execution] Gathered inputs for ${node.type}:`, {
-            nodeId: node.id,
-            inputKeys: Object.keys(inputs),
-            first_frame: inputs.first_frame
-              ? {
-                type: typeof inputs.first_frame,
-                length: inputs.first_frame?.length || 0,
-                preview:
-                  typeof inputs.first_frame === "string"
-                    ? inputs.first_frame.substring(0, 50) + "..."
-                    : inputs.first_frame,
-                isDataUrl:
-                  typeof inputs.first_frame === "string" &&
-                  inputs.first_frame.startsWith("data:"),
+          const acquireSlot = (): Promise<void> => {
+            if (activeCount < MAX_CONCURRENT_API_CALLS) {
+              activeCount++;
+              return Promise.resolve();
+            }
+            return new Promise<void>((resolve) => {
+              waiting.push(() => { activeCount++; resolve(); });
+            });
+          };
+
+          const releaseSlot = () => {
+            activeCount--;
+            if (waiting.length > 0) {
+              const next = waiting.shift()!;
+              next();
+            }
+          };
+
+          apiResults = await Promise.allSettled(
+            apiNodes.map(async (node) => {
+              progress.set(node.id, "executing");
+              setEdgeAnimated(node.id, true, false);
+              updateNodeState(node.id, "executing");
+              setExecutionProgress(new Map(progress));
+
+              const inputs = getTrackedInputs(node.id);
+              const validation = validateNodeInputs(node, inputs);
+              if (!validation.valid) {
+                return { nodeId: node.id, success: false, error: validation.error };
               }
-              : "MISSING",
-            last_frame: inputs.last_frame ? "present" : "missing",
-            reference_images: inputs.reference_images
-              ? Array.isArray(inputs.reference_images)
-                ? `array[${inputs.reference_images.length}]`
-                : "single"
-              : "missing",
-            video: inputs.video
-              ? {
-                type: typeof inputs.video,
-                length: inputs.video?.length || 0,
-                isDataUrl:
-                  typeof inputs.video === "string" &&
-                  inputs.video.startsWith("data:"),
+
+              await acquireSlot();
+              let execResult;
+              try {
+                execResult = await executeNode(node, inputs);
+              } finally {
+                releaseSlot();
               }
-              : "missing",
-          });
 
-          const validation = validateNodeInputs(node, inputs);
-
-          let result;
-          if (!validation.valid) {
-            result = {
-              status: "fulfilled" as const,
-              value: {
-                nodeId: node.id,
-                success: false,
-                error: validation.error,
-              },
-            };
-          } else {
-            try {
-              const execResult = await executeNode(node, inputs);
-
-              // ✅ CRITICAL FIX: Update trackedNodes array synchronously for API nodes
-              // This ensures downstream nodes see the latest outputs immediately
               if (execResult.success && execResult.data) {
-                const updatedOutputs =
-                  execResult.data.outputs || execResult.data;
-
-                // Enhanced logging to trace output structure
-                logger.debug(
-                  "[Execution] 📦 execResult.data structure:",
-                  {
-                    nodeId: node.id,
-                    nodeType: node.type,
-                    hasNestedOutputs: !!execResult.data.outputs,
-                    nestedOutputsKeys: execResult.data.outputs ? Object.keys(execResult.data.outputs) : [],
-                    topLevelDataKeys: Object.keys(execResult.data),
-                    videoInOutputs: !!execResult.data.outputs?.video,
-                    videoInTopLevel: !!execResult.data.video,
-                    videoValuePreview: (execResult.data.outputs?.video || execResult.data.video)
-                      ? String(execResult.data.outputs?.video || execResult.data.video).substring(0, 80) + "..."
-                      : "NONE",
-                  },
-                );
-
+                const updatedOutputs = execResult.data.outputs || execResult.data;
                 trackedNodes = trackedNodes.map((n) =>
                   n.id === node.id
-                    ? {
-                      ...n,
-                      data: {
-                        ...n.data,
-                        outputs: updatedOutputs,
-                        // Also set top-level fields for backward compatibility
-                        ...updatedOutputs,
-                      },
-                    }
+                    ? { ...n, data: { ...n.data, outputs: updatedOutputs, ...updatedOutputs } }
                     : n,
-                );
-
-                // Verify the update was applied correctly
-                const updatedNode = trackedNodes.find((n) => n.id === node.id);
-                logger.debug(
-                  "[Execution] ✓ Verified trackedNodes update:",
-                  {
-                    nodeId: node.id,
-                    nodeType: node.type,
-                    updatedOutputKeys: updatedNode?.data.outputs ? Object.keys(updatedNode.data.outputs) : [],
-                    hasVideoInOutputs: !!updatedNode?.data.outputs?.video,
-                    hasVideoTopLevel: !!(updatedNode?.data as any)?.video,
-                    trackedNodesCount: trackedNodes.length,
-                  },
                 );
               }
 
+              return { nodeId: node.id, ...execResult };
+            }),
+          );
+        } else {
+          // Sequential mode (default) - ensures proper data propagation
+          const sequentialResults: PromiseSettledResult<any>[] = [];
+          for (const node of apiNodes) {
+            progress.set(node.id, "executing");
+            setEdgeAnimated(node.id, true, false);
+            updateNodeState(node.id, "executing");
+            setExecutionProgress(new Map(progress));
+
+            const inputs = getTrackedInputs(node.id);
+            const validation = validateNodeInputs(node, inputs);
+
+            let result: PromiseSettledResult<any>;
+            if (!validation.valid) {
               result = {
                 status: "fulfilled" as const,
-                value: {
-                  nodeId: node.id,
-                  ...execResult,
-                },
+                value: { nodeId: node.id, success: false, error: validation.error },
               };
-            } catch (error) {
-              result = {
-                status: "rejected" as const,
-                reason: error,
-              };
-            }
-          }
+            } else {
+              try {
+                const execResult = await executeNode(node, inputs);
 
-          apiResults.push(result);
+                if (execResult.success && execResult.data) {
+                  const updatedOutputs = execResult.data.outputs || execResult.data;
+                  trackedNodes = trackedNodes.map((n) =>
+                    n.id === node.id
+                      ? { ...n, data: { ...n.data, outputs: updatedOutputs, ...updatedOutputs } }
+                      : n,
+                  );
+                }
+
+                result = {
+                  status: "fulfilled" as const,
+                  value: { nodeId: node.id, ...execResult },
+                };
+              } catch (error) {
+                result = {
+                  status: "rejected" as const,
+                  reason: error,
+                };
+              }
+            }
+
+            sequentialResults.push(result);
+          }
+          apiResults = sequentialResults;
         }
 
-        // Process results from both parallel and sequential execution
+        // Process results from both non-API and API execution
         const allResults = [
           ...otherResults.map((result, index) => ({
             result,
@@ -966,7 +816,7 @@ export function useWorkflowExecution(
                       downstreamNode: downstreamNodeId,
                       clearedError: downstreamNode.data.error
                     });
-                    updateNodeState(downstreamNodeId, downstreamNode.data.status, {
+                    updateNodeState(downstreamNodeId, downstreamNode.data.status || "ready", {
                       error: undefined,
                     });
                   }
@@ -1037,442 +887,22 @@ export function useWorkflowExecution(
       }
 
       return { completed: totalCompleted, failed: totalFailed };
-    }; // End of runSingleIteration
+    };
 
     try {
-      // Execute workflow (with batch mode if ScriptQueue exists)
-      if (batchMode && scripts.length > 0) {
-        // Batch execution mode
-        let batchCompleted = 0;
-        let batchFailed = 0;
-        const results: Array<{ index: number; success: boolean }> = [];
-        const collectedResults: BatchIterationResult[] = [];
+      const result = await runWorkflowExecution();
 
-        // Find terminal nodes (nodes with no outgoing edges) for collecting outputs
-        const nodesWithOutgoingEdges = new Set(edges.map(e => e.source));
-        const terminalNodes = nodes.filter(n =>
-          !nodesWithOutgoingEdges.has(n.id) &&
-          n.id !== scriptQueueNode?.id &&
-          n.data.enabled !== false
-        );
-        logger.info(`[Batch] Terminal nodes for output collection:`, terminalNodes.map(n => ({ id: n.id, type: n.type })));
-
-        // Clear any previous collected results
-        if (scriptQueueNode) {
-          setNodes((prevNodes) =>
-            prevNodes.map((n) =>
-              n.id === scriptQueueNode.id
-                ? { ...n, data: { ...n.data, collectedResults: [] } }
-                : n
-            )
-          );
-        }
-
-        // Circuit breaker: stop batch if too many consecutive failures
-        const MAX_CONSECUTIVE_FAILURES = 3;
-        let consecutiveFailures = 0;
-
-        for (let i = 0; i < scripts.length; i++) {
-          // Check if abort was requested
-          if (abortRequested) {
-            toast({
-              title: "Batch Aborted",
-              description: `Stopped after ${i} of ${scripts.length} scripts`,
-              variant: "destructive",
-            });
-            break;
-          }
-
-          // Circuit breaker check
-          if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-            logger.error(`[Batch] Circuit breaker triggered: ${consecutiveFailures} consecutive failures`);
-            toast({
-              title: "Batch Stopped",
-              description: `Stopped after ${consecutiveFailures} consecutive failures. There may be a persistent issue. Completed ${batchCompleted} of ${scripts.length} scripts.`,
-              variant: "destructive",
-            });
-            break;
-          }
-
-          setBatchProgress({ current: i + 1, total: scripts.length });
-          logger.info(`[Batch] Running script ${i + 1} of ${scripts.length}`);
-
-          toast({
-            title: `Batch Progress`,
-            description: `Processing script ${i + 1} of ${scripts.length}...`,
-          });
-
-          // Add delay between iterations to avoid rate limiting (except for first iteration)
-          if (i > 0) {
-            logger.debug(`[Batch] Waiting 2s before next iteration to avoid rate limits`);
-            await new Promise((resolve) => setTimeout(resolve, 2000));
-          }
-
-          const result = await runSingleIteration(i);
-
-          // Collect output from the batch iteration video node after iteration completes
-          // This is the node that produces video for each iteration (e.g., GenerateVideo)
-          let collectedVideoUrl: string | undefined;
-          let iterationError: string | undefined;
-
-          if (result.failed === 0) {
-            batchCompleted++;
-            consecutiveFailures = 0; // Reset circuit breaker on success
-            results.push({ index: i, success: true });
-
-            // Get current nodes state to find the batch iteration video node's output
-            await new Promise<void>((resolve) => {
-              setNodes((currentNodes) => {
-                // CRITICAL FIX: Look for video output from the batch iteration video node specifically
-                // This is the node that's connected to ScriptQueue and produces videos each iteration
-                if (batchIterationVideoNodeId) {
-                  const batchVideoNode = currentNodes.find(n => n.id === batchIterationVideoNodeId);
-                  if (batchVideoNode?.data) {
-                    const nodeData = batchVideoNode.data as any;
-                    // Prefer GCS URL for downstream processing (avoids 32MB limit)
-                    // Fall back to data URL or outputs.video
-                    const videoUrl = nodeData.gcsUrl || nodeData.outputs?.video || nodeData.videoUrl || nodeData.video;
-                    if (videoUrl) {
-                      collectedVideoUrl = videoUrl;
-                      logger.info(`[Batch] ✓ Collected video from batch node ${batchVideoNode.type}:`, {
-                        iteration: i + 1,
-                        urlPreview: videoUrl.substring(0, 100),
-                        isGcsUrl: videoUrl.startsWith('https://storage.googleapis.com'),
-                      });
-                    } else {
-                      logger.warn(`[Batch] ⚠️ No video output found in batch node ${batchVideoNode.type}`, {
-                        iteration: i + 1,
-                        availableKeys: Object.keys(nodeData),
-                        outputsKeys: nodeData.outputs ? Object.keys(nodeData.outputs) : [],
-                      });
-                    }
-                  }
-                }
-
-                // Fallback: If no batch video node or no output, check terminal nodes
-                if (!collectedVideoUrl) {
-                  const priorityOrder = [NodeType.GenerateVideo, NodeType.AddMusicToVideo, NodeType.MergeVideos];
-
-                  for (const nodeType of priorityOrder) {
-                    // Look in all nodes, not just terminalNodes (which might exclude post-batch nodes)
-                    const videoNode = currentNodes.find(n =>
-                      n.type === nodeType &&
-                      !postBatchNodeIds.has(n.id) // Skip post-batch nodes
-                    );
-                    if (videoNode?.data) {
-                      const nodeData = videoNode.data as any;
-                      const videoUrl = nodeData.gcsUrl || nodeData.outputs?.video || nodeData.outputVideoUrl || nodeData.videoUrl;
-                      if (videoUrl) {
-                        collectedVideoUrl = videoUrl;
-                        logger.info(`[Batch] Collected video from fallback ${nodeType}:`, videoUrl.substring(0, 100));
-                        break;
-                      }
-                    }
-                  }
-                }
-
-                resolve();
-                return currentNodes; // Return unchanged
-              });
-            });
-          } else {
-            batchFailed++;
-            consecutiveFailures++; // Increment circuit breaker counter
-            results.push({ index: i, success: false });
-            iterationError = `${result.failed} node(s) failed`;
-            logger.warn(`[Batch] Iteration ${i + 1} failed (consecutive failures: ${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES})`);
-          }
-
-          // Add to collected results
-          const iterationResult: BatchIterationResult = {
-            index: i,
-            scriptPreview: scripts[i].substring(0, 50) + (scripts[i].length > 50 ? "..." : ""),
-            success: result.failed === 0,
-            videoUrl: collectedVideoUrl,
-            error: iterationError,
-            timestamp: Date.now(),
-          };
-          collectedResults.push(iterationResult);
-
-          // Update ScriptQueue with collected results (incrementally)
-          if (scriptQueueNode) {
-            setNodes((prevNodes) =>
-              prevNodes.map((n) =>
-                n.id === scriptQueueNode.id
-                  ? { ...n, data: { ...n.data, collectedResults: [...collectedResults] } }
-                  : n
-              )
-            );
-          }
-
-          setBatchResults([...results]);
-
-          // Small delay between iterations to avoid overwhelming APIs
-          if (i < scripts.length - 1) {
-            await new Promise((resolve) => setTimeout(resolve, 500));
-          }
-        }
-
-        // Mark ScriptQueue as done (keep collectedResults)
-        if (scriptQueueNode) {
-          setNodes((prevNodes) =>
-            prevNodes.map((n) =>
-              n.id === scriptQueueNode.id
-                ? { ...n, data: { ...n.data, isProcessing: false, collectedResults } }
-                : n
-            )
-          );
-        }
-
-        // ========== POST-BATCH NODE EXECUTION ==========
-        // Execute aggregator nodes (MergeVideos, AddMusicToVideo, VoiceChanger) that were skipped
-        // during batch iterations. These nodes need outputs from ALL iterations.
-
-        // Debug: Log the state before post-batch execution
-        logger.info(`[Batch] 🔍 Post-batch check:`, {
-          postBatchNodeIds: Array.from(postBatchNodeIds),
-          postBatchNodeCount: postBatchNodeIds.size,
-          collectedResultsCount: collectedResults.length,
-          batchIterationVideoNodeId,
-          collectedVideos: collectedResults.map(r => ({
-            index: r.index,
-            success: r.success,
-            hasVideo: !!r.videoUrl,
-          })),
-        });
-
-        // FALLBACK: If no post-batch nodes were detected but we have aggregator nodes
-        // and collected videos, try to find and add them now
-        if (postBatchNodeIds.size === 0 && collectedResults.length > 0) {
-          const aggregatorTypes = new Set([
-            NodeType.MergeVideos,
-            NodeType.AddMusicToVideo,
-            NodeType.VoiceChanger,
-          ]);
-
-          const aggregatorNodes = nodes.filter(n => aggregatorTypes.has(n.type as NodeType));
-
-          if (aggregatorNodes.length > 0) {
-            logger.warn(`[Batch] ⚠️ No post-batch nodes detected but found ${aggregatorNodes.length} aggregator node(s). Adding them as post-batch.`);
-
-            // Add all aggregators and their downstream nodes
-            for (const aggNode of aggregatorNodes) {
-              postBatchNodeIds.add(aggNode.id);
-
-              const findDownstream = (nodeId: string) => {
-                const outEdges = edges.filter(e => e.source === nodeId);
-                for (const edge of outEdges) {
-                  if (!postBatchNodeIds.has(edge.target)) {
-                    postBatchNodeIds.add(edge.target);
-                    findDownstream(edge.target);
-                  }
-                }
-              };
-              findDownstream(aggNode.id);
-            }
-
-            logger.info(`[Batch] Added ${postBatchNodeIds.size} nodes as post-batch (fallback)`);
-          }
-        }
-
-        if (postBatchNodeIds.size > 0 && collectedResults.length > 0) {
-          logger.info(`[Batch] Starting post-batch execution for ${postBatchNodeIds.size} nodes`);
-
-          // Collect video URLs from successful iterations, PRESERVING SCRIPT ORDER
-          // Sort by index to ensure videos are merged in the same order as scripts
-          const batchVideoUrls = collectedResults
-            .filter(r => r.success && r.videoUrl)
-            .sort((a, b) => a.index - b.index)  // Ensure script order is preserved
-            .map(r => r.videoUrl as string);
-
-          logger.info(`[Batch] Collected ${batchVideoUrls.length} video URLs in script order:`,
-            collectedResults
-              .filter(r => r.success && r.videoUrl)
-              .sort((a, b) => a.index - b.index)
-              .map(r => ({ index: r.index, scriptPreview: r.scriptPreview }))
-          );
-
-          if (batchVideoUrls.length >= 2) {
-            // Find and execute post-batch nodes in dependency order
-            const postBatchNodes = nodes.filter(n => postBatchNodeIds.has(n.id));
-
-            // Sort by dependency order (nodes with no post-batch dependencies first)
-            const sortedPostBatchNodes = [...postBatchNodes].sort((a, b) => {
-              const aHasPostBatchInput = edges.some(e => e.target === a.id && postBatchNodeIds.has(e.source));
-              const bHasPostBatchInput = edges.some(e => e.target === b.id && postBatchNodeIds.has(e.source));
-              return (aHasPostBatchInput ? 1 : 0) - (bHasPostBatchInput ? 1 : 0);
-            });
-
-            // Get the CURRENT state of all nodes (including outputs from iteration nodes like GenerateMusic)
-            // This is critical for post-batch nodes that need non-video inputs (e.g., audio for AddMusicToVideo)
-            let postBatchTrackedNodes: WorkflowNode[] = [];
-            await new Promise<void>((resolve) => {
-              setNodes((currentNodes) => {
-                postBatchTrackedNodes = [...currentNodes];
-                resolve();
-                return currentNodes;
-              });
-            });
-
-            logger.info(`[Batch] Post-batch tracked nodes state:`,
-              postBatchTrackedNodes
-                .filter(n => n.data.outputs && Object.keys(n.data.outputs as object).length > 0)
-                .map(n => ({
-                  id: n.id,
-                  type: n.type,
-                  outputKeys: Object.keys(n.data.outputs as object),
-                }))
-            );
-
-            for (const postBatchNode of sortedPostBatchNodes) {
-              logger.info(`[Batch] Executing post-batch node: ${postBatchNode.type} (${postBatchNode.id})`);
-
-              // Update node state to executing
-              updateNodeState(postBatchNode.id, "executing");
-              setEdgeAnimated(postBatchNode.id, true, false);
-
-              // Build inputs for this post-batch node
-              let postBatchInputs: Record<string, any> = {};
-
-              if (postBatchNode.type === NodeType.MergeVideos) {
-                // MergeVideos gets video URLs from batch iterations
-                // Map video1, video2, video3... to the collected URLs
-                batchVideoUrls.forEach((url, idx) => {
-                  if (idx < 6) {
-                    postBatchInputs[`video${idx + 1}`] = url;
-                  }
-                });
-                logger.info(`[Batch] MergeVideos inputs:`, {
-                  videoCount: Object.keys(postBatchInputs).length,
-                  firstVideoPreview: batchVideoUrls[0]?.substring(0, 80),
-                });
-              } else {
-                // Other post-batch nodes (AddMusicToVideo, VoiceChanger) get inputs from
-                // their connected upstream nodes (which might be other post-batch nodes)
-                postBatchInputs = gatherNodeInputs(postBatchNode, postBatchTrackedNodes, edges, { executionId });
-
-                logger.info(`[Batch] ${postBatchNode.type} gathered inputs:`, {
-                  inputKeys: Object.keys(postBatchInputs),
-                  hasVideo: !!postBatchInputs.video,
-                  hasAudio: !!postBatchInputs.audio,
-                  hasAudioTrack1: !!postBatchInputs.audioTrack1,
-                });
-              }
-
-              try {
-                const result = await executeNode(postBatchNode, postBatchInputs);
-
-                if (result.success && result.data) {
-                  const updatedOutputs = result.data.outputs || result.data;
-
-                  // Update tracked nodes with this output
-                  postBatchTrackedNodes = postBatchTrackedNodes.map(n =>
-                    n.id === postBatchNode.id
-                      ? { ...n, data: { ...n.data, outputs: updatedOutputs, ...updatedOutputs } }
-                      : n
-                  );
-
-                  // Update React state
-                  updateNodeState(postBatchNode.id, "completed", { ...result.data, outputs: updatedOutputs });
-                  setEdgeAnimated(postBatchNode.id, false, true);
-                  setTimeout(() => setEdgeAnimated(postBatchNode.id, false, false), 500);
-
-                  logger.info(`[Batch] ✓ Post-batch node ${postBatchNode.type} completed successfully`);
-                } else {
-                  updateNodeState(postBatchNode.id, "error", { error: result.error });
-                  setEdgeAnimated(postBatchNode.id, false, false);
-                  logger.error(`[Batch] ✗ Post-batch node ${postBatchNode.type} failed:`, result.error);
-                }
-              } catch (error) {
-                const errorMsg = error instanceof Error ? error.message : "Unknown error";
-                updateNodeState(postBatchNode.id, "error", { error: errorMsg });
-                setEdgeAnimated(postBatchNode.id, false, false);
-                logger.error(`[Batch] ✗ Post-batch node ${postBatchNode.type} threw error:`, errorMsg);
-              }
-            }
-
-            // Find the final output from the last post-batch node
-            const lastPostBatchNode = sortedPostBatchNodes[sortedPostBatchNodes.length - 1];
-            const finalNode = postBatchTrackedNodes.find(n => n.id === lastPostBatchNode?.id);
-            const finalVideoUrl = (finalNode?.data as any)?.outputVideoUrl ||
-              (finalNode?.data as any)?.outputs?.video ||
-              (finalNode?.data as any)?.videoUrl;
-
-            if (finalVideoUrl) {
-              logger.info(`[Batch] 🎬 Final output from ${lastPostBatchNode?.type}:`, finalVideoUrl.substring(0, 100));
-
-              // Store the final merged video in ScriptQueue for easy access
-              if (scriptQueueNode) {
-                setNodes((prevNodes) =>
-                  prevNodes.map((n) =>
-                    n.id === scriptQueueNode.id
-                      ? { ...n, data: { ...n.data, finalVideoUrl, finalVideoNodeType: lastPostBatchNode?.type } }
-                      : n
-                  )
-                );
-              }
-            }
-
-            toast({
-              title: "Post-Batch Processing Complete",
-              description: `Merged ${batchVideoUrls.length} videos → ${sortedPostBatchNodes.map(n => n.type).join(' → ')}`,
-            });
-          } else {
-            // Not enough videos collected - provide helpful error message
-            const failedIterations = collectedResults.filter(r => !r.success).length;
-            const iterationsWithVideo = collectedResults.filter(r => r.videoUrl).length;
-
-            logger.warn(`[Batch] Skipping post-batch nodes:`, {
-              totalIterations: collectedResults.length,
-              failedIterations,
-              iterationsWithVideo,
-              videosCollected: batchVideoUrls.length,
-              collectedResultsDetail: collectedResults.map(r => ({
-                index: r.index,
-                success: r.success,
-                hasVideo: !!r.videoUrl,
-                videoUrlPreview: r.videoUrl ? r.videoUrl.substring(0, 60) : 'none',
-              })),
-            });
-
-            // Mark post-batch nodes as skipped with detailed error
-            const errorMessage = batchVideoUrls.length === 0
-              ? `No videos collected from ${collectedResults.length} iteration(s). Check if GenerateVideo completed successfully.`
-              : batchVideoUrls.length === 1
-                ? `Only 1 video collected (need at least 2 to merge). ${failedIterations} iteration(s) failed.`
-                : `Only ${batchVideoUrls.length} video(s) collected from batch.`;
-
-            postBatchNodeIds.forEach(nodeId => {
-              updateNodeState(nodeId, "error", { error: errorMessage });
-            });
-          }
-        }
-
-        // Show batch completion summary
+      if (result.failed === 0) {
         toast({
-          title: "Batch Completed",
-          description: `${batchCompleted} of ${scripts.length} scripts succeeded${batchFailed > 0 ? `, ${batchFailed} failed` : ""}`,
-          variant: batchFailed > 0 ? "destructive" : "default",
+          title: "Workflow Completed",
+          description: `All ${result.completed} nodes executed successfully!`,
         });
-
-        setIsBatchMode(false);
       } else {
-        // Normal single execution mode
-        const result = await runSingleIteration(0);
-
-        // Show completion summary
-        if (result.failed === 0) {
-          toast({
-            title: "Workflow Completed",
-            description: `All ${result.completed} nodes executed successfully!`,
-          });
-        } else {
-          toast({
-            title: "Workflow Completed with Errors",
-            description: `${result.completed} succeeded, ${result.failed} failed`,
-            variant: "destructive",
-          });
-        }
+        toast({
+          title: "Workflow Completed with Errors",
+          description: `${result.completed} succeeded, ${result.failed} failed`,
+          variant: "destructive",
+        });
       }
     } catch (error) {
       toast({
@@ -1484,7 +914,6 @@ export function useWorkflowExecution(
     } finally {
       setIsExecuting(false);
       setAbortRequested(false);
-      setIsBatchMode(false);
     }
   }, [
     isExecuting,
@@ -1496,6 +925,7 @@ export function useWorkflowExecution(
     updateNodeState,
     abortRequested,
     setNodes,
+    parallelExecution,
   ]);
 
   // Reset workflow state
@@ -1733,9 +1163,5 @@ export function useWorkflowExecution(
     isExecuting,
     executionProgress,
     totalNodes,
-    // Batch execution state
-    isBatchMode,
-    batchProgress,
-    batchResults,
   };
 }

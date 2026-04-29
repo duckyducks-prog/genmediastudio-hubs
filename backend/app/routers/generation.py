@@ -1,7 +1,9 @@
 import asyncio
+import json
 from functools import lru_cache
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from app.schemas import (
     ImageRequest, ImageResponse,
     VideoRequest, StatusRequest, VideoStatusResponse,
@@ -338,6 +340,58 @@ async def check_video_status(
             status_code=500,
             detail=f"Video status check failed: {type(e).__name__}: {str(e)}"
         )
+
+@router.get("/video/stream")
+async def stream_video_status(
+    operation_id: str,
+    prompt: Optional[str] = None,
+    user: dict = Depends(get_current_user),
+    service: GenerationService = Depends(get_generation_service),
+):
+    """Stream video generation status via Server-Sent Events"""
+    from urllib.parse import unquote
+    decoded_operation_id = unquote(operation_id)
+    logger.info(f"SSE video stream started: user={user['email']}, operation_id={decoded_operation_id[:80]}...")
+
+    async def event_generator():
+        max_attempts = 30
+        for attempt in range(1, max_attempts + 1):
+            try:
+                result = await service.check_video_status(
+                    operation_name=decoded_operation_id,
+                    user_id=user["uid"],
+                    prompt=prompt,
+                )
+
+                if result.status == "complete":
+                    logger.info(f"SSE: Video complete (attempt {attempt})")
+                    yield f"data: {result.model_dump_json()}\n\n"
+                    return
+                elif result.status == "error":
+                    logger.warning(f"SSE: Video error (attempt {attempt}): {result.error}")
+                    yield f"data: {result.model_dump_json()}\n\n"
+                    return
+                else:
+                    yield f"data: {json.dumps({'status': 'processing', 'attempt': attempt})}\n\n"
+            except Exception as e:
+                logger.error(f"SSE: Exception during status check (attempt {attempt}): {e}", exc_info=True)
+                yield f"data: {json.dumps({'status': 'error', 'error': str(e)})}\n\n"
+                return
+
+            await asyncio.sleep(10)
+
+        logger.warning(f"SSE: Video generation timed out after {max_attempts} attempts")
+        yield f"data: {json.dumps({'status': 'error', 'error': 'Timed out after 5 minutes'})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 @router.post("/upscale", response_model=UpscaleResponse)
 async def upscale_image(
