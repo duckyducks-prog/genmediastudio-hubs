@@ -56,6 +56,7 @@ export async function executeLLM(
         system_prompt: systemPrompt,
         context,
         temperature,
+        mode: ctx.mode,
       }),
     });
 
@@ -76,6 +77,7 @@ export async function executeLLM(
       data: {
         response: apiData.response,
         responsePreview: apiData.response, // For UI display
+        generatedMode: ctx.mode,
         outputs: { response: apiData.response },
       },
     };

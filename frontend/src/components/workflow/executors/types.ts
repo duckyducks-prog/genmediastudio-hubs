@@ -1,5 +1,6 @@
 import { WorkflowNode, WorkflowEdge } from "../types";
 import { FilterConfig } from "@/lib/pixi-filter-configs";
+import type { GenerationMode } from "@/contexts/WorkflowContext";
 
 export interface ExecutionResult {
   success: boolean;
@@ -9,6 +10,9 @@ export interface ExecutionResult {
 }
 
 export interface ExecutionContext {
+  // Generation mode
+  mode: GenerationMode;
+
   // State updaters
   updateNodeState: (
     nodeId: string,

@@ -158,6 +158,20 @@ function LLMNode({ data, id }: NodeProps<LLMNodeData>) {
           </div>
         )}
 
+        {(data as any).generatedMode && (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Brain className="w-3 h-3" />
+            <span>Gemini Flash</span>
+            <span className={`ml-auto px-1.5 py-0.5 rounded text-[9px] font-semibold ${
+              (data as any).generatedMode === "project"
+                ? "bg-amber-500/20 text-amber-400"
+                : "bg-muted text-muted-foreground"
+            }`}>
+              {(data as any).generatedMode === "project" ? "Project" : "Explore"}
+            </span>
+          </div>
+        )}
+
         {/* Run Node Button */}
         <RunNodeButton nodeId={id} isExecuting={isGenerating} disabled={data.readOnly} label="Run" loadingLabel="Running..." />
       </div>

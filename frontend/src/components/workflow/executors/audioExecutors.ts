@@ -39,6 +39,7 @@ export async function executeGenerateMusic(
       body: JSON.stringify({
         prompt,
         duration_seconds: durationSeconds,
+        mode: ctx.mode,
       }),
     });
 
@@ -98,6 +99,7 @@ export async function executeGenerateMusic(
       const resultData = {
         audioUrl,
         audioDuration: apiData.duration_seconds || 30,
+        generatedMode: ctx.mode,
         outputs: {
           audio: audioUrl,
         },

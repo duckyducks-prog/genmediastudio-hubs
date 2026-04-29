@@ -18,6 +18,7 @@ import { useToast } from "@/hooks/use-toast";
 import { WorkflowMetadata, testWorkflowAPI } from "@/lib/workflow-api";
 import { useSaveWorkflow, useUpdateWorkflow } from "@/lib/workflow-queries";
 import { useAuth } from "@/lib/AuthContext";
+import { useWorkflow } from "@/contexts/WorkflowContext";
 import { WorkflowNode, WorkflowEdge } from "./types";
 import { AlertCircle } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -59,6 +60,7 @@ export default function SaveWorkflowDialog({
   const [isTestingConnection, setIsTestingConnection] = useState(false);
   const { toast } = useToast();
   const { user } = useAuth();
+  const { state: workflowState } = useWorkflow();
 
   // Check if current user is admin (can create public templates)
   const isAdmin = user?.email && ADMIN_EMAILS.includes(user.email);
@@ -204,6 +206,7 @@ export default function SaveWorkflowDialog({
         edges: sanitized.edges,
         thumbnail,
         background_image: isPublic ? backgroundImage || undefined : undefined,
+        mode: workflowState.mode,
       };
 
       if (existingWorkflow?.id) {

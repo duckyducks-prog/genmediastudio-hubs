@@ -875,6 +875,11 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
         setEdges(workflow.edges || []);
         setCurrentWorkflowId(workflow.id || null);
 
+        // Restore generation mode from saved workflow
+        if (workflow.mode) {
+          dispatch({ type: "SET_MODE", payload: workflow.mode });
+        }
+
         // Mark as saved since we just loaded it
         dispatch({ type: "MARK_SAVED" });
 

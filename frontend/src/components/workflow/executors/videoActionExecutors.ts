@@ -239,6 +239,7 @@ export async function executeGenerateVideo(
         8,
       generate_audio:
         formatData?.generate_audio ?? nodeData.generateAudio ?? true,
+      mode: ctx.mode,
     };
 
     // Add seed if provided (for consistent voice/style)
@@ -433,6 +434,7 @@ export async function executeGenerateVideo(
           video: result.videoUrl,  // Data URL for preview
           videoUrl: result.videoUrl,  // Data URL for preview
           gcsUrl: result.gcsUrl,  // GCS URL for downstream processing
+          generatedMode: ctx.mode,
           outputs: {
             video: outputUrl, // Use GCS URL for downstream (merge, etc.)
           },

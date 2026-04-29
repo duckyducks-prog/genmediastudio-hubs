@@ -33,6 +33,7 @@ export interface WorkflowMetadata {
   user_email?: string;
   node_count?: number; // ✅ Metadata field for list views
   edge_count?: number; // ✅ Metadata field for list views
+  mode?: "explore" | "project"; // Generation mode (explore = cheap models, project = premium)
 }
 
 export interface SavedWorkflow extends WorkflowMetadata {

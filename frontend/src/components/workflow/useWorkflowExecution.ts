@@ -19,6 +19,7 @@ import {
   extractLastFrameFromVideo,
 } from "./executionHelpers";
 import { auth } from "@/lib/firebase";
+import { useWorkflow } from "@/contexts/WorkflowContext";
 import { renderWithPixi, renderCompositeWithPixi } from "@/lib/pixi-renderer";
 import { FilterConfig } from "@/lib/pixi-filter-configs";
 import { API_ENDPOINTS } from "@/lib/api-config";
@@ -97,6 +98,7 @@ export function useWorkflowExecution(
   onAssetGenerated?: () => void,
   parallelExecution = false,
 ) {
+  const { state: workflowState } = useWorkflow();
   const [isExecuting, setIsExecuting] = useState(false);
   const [executionProgress, setExecutionProgress] = useState<
     Map<string, string>
@@ -299,6 +301,7 @@ export function useWorkflowExecution(
   // Build execution context for node executors
   const executionContext: ExecutionContext = useMemo(
     () => ({
+      mode: workflowState.mode,
       updateNodeState,
       onAssetGenerated,
       toast,
@@ -379,7 +382,7 @@ export function useWorkflowExecution(
         return { success: true, data: {}, nodes: trackedNodes };
       },
     }),
-    [updateNodeState, onAssetGenerated],
+    [updateNodeState, onAssetGenerated, workflowState.mode],
   );
 
   // Execute a single node

@@ -351,6 +351,15 @@ function GenerateImageNode({ data, id }: NodeProps<GenerateImageNodeData>) {
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <Sparkles className="w-3 h-3" />
           <span>Gemini 3 Pro</span>
+          {data.generatedMode && (
+            <span className={`ml-auto px-1.5 py-0.5 rounded text-[9px] font-semibold ${
+              data.generatedMode === "project"
+                ? "bg-amber-500/20 text-amber-400"
+                : "bg-muted text-muted-foreground"
+            }`}>
+              {data.generatedMode === "project" ? "Project" : "Explore"}
+            </span>
+          )}
         </div>
 
         {/* Image Preview */}

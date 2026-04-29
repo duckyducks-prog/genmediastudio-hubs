@@ -13,7 +13,7 @@ import {
   Package,
 } from "lucide-react";
 import { useReactFlow } from "reactflow";
-import { useWorkflow } from "@/contexts/WorkflowContext";
+import { useWorkflow, GenerationMode } from "@/contexts/WorkflowContext";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 
 interface WorkflowToolbarProps {
@@ -50,7 +50,12 @@ export default function WorkflowToolbar({
   onToggleParallelExecution,
 }: WorkflowToolbarProps) {
   const { zoomIn, zoomOut, fitView } = useReactFlow();
-  const { state } = useWorkflow();
+  const { state, dispatch } = useWorkflow();
+
+  const toggleMode = () => {
+    const next: GenerationMode = state.mode === "explore" ? "project" : "explore";
+    dispatch({ type: "SET_MODE", payload: next });
+  };
 
   // Format last saved time
   const getLastSavedText = () => {
@@ -127,6 +132,21 @@ export default function WorkflowToolbar({
       <ThemeToggle />
 
       <div className="w-px h-6 bg-border mx-0.5" />
+
+      <button
+        onClick={toggleMode}
+        disabled={isExecuting}
+        className={`h-7 px-2 rounded text-[10px] font-medium transition-colors ${
+          state.mode === "project"
+            ? "bg-amber-500/20 text-amber-400 border border-amber-500/40"
+            : "bg-muted text-muted-foreground border border-transparent hover:bg-muted/80"
+        } ${isExecuting ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+        title={state.mode === "explore"
+          ? "Explore: Uses lightweight models for fast, low-cost experimentation"
+          : "Project: Uses premium models for final-quality output"}
+      >
+        {state.mode === "explore" ? "Explore" : "Project"}
+      </button>
 
       <button
         onClick={onToggleParallelExecution}

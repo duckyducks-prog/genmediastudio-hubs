@@ -198,6 +198,7 @@ export async function executeGenerateImage(
       prompt,
       aspect_ratio:
         formatData?.aspect_ratio || (node.data as unknown as Record<string, unknown>).aspectRatio || "1:1",
+      mode: ctx.mode,
     };
 
     // Add reference_images if we have valid data
@@ -282,6 +283,7 @@ export async function executeGenerateImage(
         image: firstImage,
         imageUrl: firstImage,
         savedAssetId: apiData.saved_asset_id || null,
+        generatedMode: ctx.mode,
         outputs: {
           images: images, // For connecting to reference_images (array)
           image: firstImage, // For connecting to first_frame/last_frame (single)

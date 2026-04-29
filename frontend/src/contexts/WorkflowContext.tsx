@@ -8,6 +8,9 @@ import {
 } from "react";
 import { Node, Edge } from "reactflow";
 
+// Generation mode type
+export type GenerationMode = "explore" | "project";
+
 // State shape
 export interface WorkflowState {
   nodes: Node[];
@@ -15,6 +18,7 @@ export interface WorkflowState {
   viewport: { x: number; y: number; zoom: number };
   isDirty: boolean;
   lastSaved: Date | null;
+  mode: GenerationMode;
 }
 
 // Actions
@@ -31,7 +35,8 @@ export type WorkflowAction =
   | { type: "REMOVE_EDGE"; payload: string }
   | { type: "CLEAR_WORKFLOW" }
   | { type: "LOAD_WORKFLOW"; payload: WorkflowState }
-  | { type: "MARK_SAVED" };
+  | { type: "MARK_SAVED" }
+  | { type: "SET_MODE"; payload: GenerationMode };
 
 // Initial state
 const initialState: WorkflowState = {
@@ -40,6 +45,7 @@ const initialState: WorkflowState = {
   viewport: { x: 0, y: 0, zoom: 1 },
   isDirty: false,
   lastSaved: null,
+  mode: "explore",
 };
 
 // Reducer
@@ -114,6 +120,9 @@ function workflowReducer(
     case "MARK_SAVED":
       return { ...state, isDirty: false, lastSaved: new Date() };
 
+    case "SET_MODE":
+      return { ...state, mode: action.payload, isDirty: true };
+
     default:
       return state;
   }
@@ -143,6 +152,7 @@ export function WorkflowProvider({ children }: { children: ReactNode }) {
             ...parsed,
             isDirty: false,
             lastSaved: parsed.lastSaved ? new Date(parsed.lastSaved) : null,
+            mode: parsed.mode || "explore",
           };
         } catch (e) {
           console.warn("Failed to parse saved workflow:", e);
@@ -191,6 +201,7 @@ export function WorkflowProvider({ children }: { children: ReactNode }) {
             nodes: nodesSafeForStorage,
             edges: state.edges,
             viewport: state.viewport,
+            mode: state.mode,
             lastSaved: new Date().toISOString(),
           }),
         );
