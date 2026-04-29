@@ -45,7 +45,7 @@ import { CompoundNodeDefinition } from "@/lib/compound-nodes/types";
 import { useWorkflowExecution } from "./useWorkflowExecution";
 import { validateConnection, getConnectorType } from "./connectionValidation";
 import { useToast } from "@/hooks/use-toast";
-import { SavedWorkflow, cloneWorkflow } from "@/lib/workflow-api";
+import { SavedWorkflow, cloneWorkflow, loadWorkflow as fetchWorkflow } from "@/lib/workflow-api";
 import { Button } from "@/components/ui/button";
 import { Copy } from "lucide-react";
 import { NodeContextMenu } from "./NodeContextMenu";
@@ -1839,11 +1839,13 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
                     return;
                   }
                   try {
-                    await cloneWorkflow(currentWorkflowId);
+                    const { id: clonedId } = await cloneWorkflow(currentWorkflowId);
+                    const clonedWorkflow = await fetchWorkflow(clonedId);
+                    loadWorkflow(clonedWorkflow, { readOnly: false });
                     toast({
                       title: "Workflow Cloned",
                       description:
-                        "The template has been cloned to your workflows. Check My Workflows.",
+                        `"${clonedWorkflow.name}" is now open and editable.`,
                     });
                   } catch (error) {
                     toast({

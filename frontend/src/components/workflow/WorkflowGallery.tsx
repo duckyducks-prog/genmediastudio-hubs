@@ -1,5 +1,5 @@
 import { logger } from "@/lib/logger";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +20,7 @@ import {
   Workflow as WorkflowIcon,
   Lock,
   AlertCircle,
+  ArrowUpDown,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -51,6 +52,7 @@ export default function WorkflowGallery({
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [apiStatus, setApiStatus] = useState<APITestResult | null>(null);
   const [showApiTest, setShowApiTest] = useState(false);
+  const [sortNewestFirst, setSortNewestFirst] = useState(true);
   const { toast } = useToast();
   const { user } = useAuth();
 
@@ -76,8 +78,16 @@ export default function WorkflowGallery({
   const { invalidateAll } = useInvalidateWorkflows();
 
   // Derive workflow lists from query data
-  const myWorkflows = myWorkflowsData ?? [];
   const publicWorkflows = publicWorkflowsData ?? [];
+
+  const myWorkflows = useMemo(() => {
+    const list = myWorkflowsData ?? [];
+    return [...list].sort((a, b) => {
+      const dateA = new Date(a.created_at ?? 0).getTime();
+      const dateB = new Date(b.created_at ?? 0).getTime();
+      return sortNewestFirst ? dateB - dateA : dateA - dateB;
+    });
+  }, [myWorkflowsData, sortNewestFirst]);
 
   const isLoading = isLoadingMy || isLoadingPublic;
 
@@ -387,14 +397,26 @@ export default function WorkflowGallery({
               <p className="text-sm">Create your first workflow and save it</p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {myWorkflows.map((workflow) => (
-                <WorkflowCard
-                  key={workflow.id}
-                  workflow={workflow}
-                  showDelete={true}
-                />
-              ))}
+            <div className="space-y-4">
+              <div className="flex justify-end">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setSortNewestFirst((prev) => !prev)}
+                >
+                  <ArrowUpDown className="w-4 h-4 mr-2" />
+                  {sortNewestFirst ? "Newest First" : "Oldest First"}
+                </Button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {myWorkflows.map((workflow) => (
+                  <WorkflowCard
+                    key={workflow.id}
+                    workflow={workflow}
+                    showDelete={true}
+                  />
+                ))}
+              </div>
             </div>
           )}
         </TabsContent>

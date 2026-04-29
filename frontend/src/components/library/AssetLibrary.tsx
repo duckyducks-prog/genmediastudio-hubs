@@ -40,11 +40,13 @@ import {
   X,
   RefreshCw,
   Archive,
+  Plus,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { auth } from "@/lib/firebase";
 import { API_ENDPOINTS } from "@/lib/api-config";
 import { logger } from "@/lib/logger";
+import { Input } from "@/components/ui/input";
 import { useFolders } from "@/hooks/useFolders";
 import { FolderSidebar } from "./FolderSidebar";
 
@@ -79,6 +81,8 @@ const AssetLibrary = forwardRef<AssetLibraryRef, AssetLibraryProps>(
     const [isDownloadingZip, setIsDownloadingZip] = useState(false);
     const [previewAsset, setPreviewAsset] = useState<Asset | null>(null);
     const [selectedFolderId, setSelectedFolderId] = useState<string>("all");
+    const [creatingFolderForAsset, setCreatingFolderForAsset] = useState<string | null>(null);
+    const [newFolderName, setNewFolderName] = useState("");
     const { toast } = useToast();
 
     const {
@@ -539,12 +543,71 @@ const AssetLibrary = forwardRef<AssetLibraryRef, AssetLibraryProps>(
                               </div>
 
                               {/* Folder selector */}
-                              {folders.length > 0 && (
+                              {creatingFolderForAsset === asset.id ? (
+                                <div className="flex items-center gap-1">
+                                  <Input
+                                    value={newFolderName}
+                                    onChange={(e) => setNewFolderName(e.target.value)}
+                                    placeholder="Folder name"
+                                    className="h-7 text-xs flex-1"
+                                    autoFocus
+                                    onKeyDown={async (e) => {
+                                      if (e.key === "Enter" && newFolderName.trim()) {
+                                        try {
+                                          const folder = await createFolder(newFolderName.trim());
+                                          await handleMoveAsset(asset.id, folder.id);
+                                        } catch (err) {
+                                          toast({ title: "Failed to create folder", variant: "destructive" });
+                                        }
+                                        setNewFolderName("");
+                                        setCreatingFolderForAsset(null);
+                                      }
+                                      if (e.key === "Escape") {
+                                        setNewFolderName("");
+                                        setCreatingFolderForAsset(null);
+                                      }
+                                    }}
+                                  />
+                                  <Button
+                                    size="sm"
+                                    className="h-7 text-xs px-2"
+                                    disabled={!newFolderName.trim()}
+                                    onClick={async () => {
+                                      if (!newFolderName.trim()) return;
+                                      try {
+                                        const folder = await createFolder(newFolderName.trim());
+                                        await handleMoveAsset(asset.id, folder.id);
+                                      } catch (err) {
+                                        toast({ title: "Failed to create folder", variant: "destructive" });
+                                      }
+                                      setNewFolderName("");
+                                      setCreatingFolderForAsset(null);
+                                    }}
+                                  >
+                                    <Plus className="w-3 h-3" />
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-7 text-xs px-2"
+                                    onClick={() => {
+                                      setNewFolderName("");
+                                      setCreatingFolderForAsset(null);
+                                    }}
+                                  >
+                                    <X className="w-3 h-3" />
+                                  </Button>
+                                </div>
+                              ) : (
                                 <Select
                                   value={asset.folder_id ?? "__unset__"}
-                                  onValueChange={(val) =>
-                                    handleMoveAsset(asset.id, val === "__remove__" ? null : val)
-                                  }
+                                  onValueChange={(val) => {
+                                    if (val === "__create__") {
+                                      setCreatingFolderForAsset(asset.id);
+                                      return;
+                                    }
+                                    handleMoveAsset(asset.id, val === "__remove__" ? null : val);
+                                  }}
                                 >
                                   <SelectTrigger className="h-7 text-xs">
                                     <SelectValue placeholder="Add to folder…" />
@@ -560,6 +623,12 @@ const AssetLibrary = forwardRef<AssetLibraryRef, AssetLibraryProps>(
                                         {f.name}
                                       </SelectItem>
                                     ))}
+                                    <SelectItem value="__create__">
+                                      <span className="flex items-center gap-1">
+                                        <Plus className="w-3 h-3" />
+                                        Create Folder
+                                      </span>
+                                    </SelectItem>
                                   </SelectContent>
                                 </Select>
                               )}
