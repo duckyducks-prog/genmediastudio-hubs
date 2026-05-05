@@ -57,6 +57,8 @@ API_LOCATION=$(uv run python -c "from app.config import settings; print(settings
 GCS_BUCKET=$(uv run python -c "from app.config import settings; print(settings.gcs_bucket)")
 WORKFLOWS_BUCKET=$(uv run python -c "from app.config import settings; print(settings.workflows_bucket)")
 FIREBASE_PROJECT_ID=$(uv run python -c "from app.config import settings; print(settings.firebase_project_id)")
+VEO_MODEL=$(uv run python -c "from app.config import settings; print(settings.veo_model)")
+VEO_LOCATION=$(uv run python -c "from app.config import settings; print(settings.veo_location)")
 
 # Environment variables (from .env.production or .env)
 ALLOWED_EMAILS="${ALLOWED_EMAILS:-}"
@@ -82,6 +84,8 @@ echo "  GCS Bucket: $GCS_BUCKET"
 echo "  Workflows Bucket: $WORKFLOWS_BUCKET"
 echo "  Firebase Project: $FIREBASE_PROJECT_ID"
 echo "  Firestore Environment: $FIRESTORE_ENVIRONMENT"
+echo "  Veo Model: $VEO_MODEL"
+echo "  Veo Location: $VEO_LOCATION"
 echo "  Allowed Domains: $ALLOWED_DOMAINS"
 echo "  Allowed Emails: $ALLOWED_EMAILS"
 echo "  Allowed Origins: $ALLOWED_ORIGINS"
@@ -100,6 +104,8 @@ ALLOWED_EMAILS: "$ALLOWED_EMAILS"
 ADMIN_EMAILS: "$ADMIN_EMAILS"
 ELEVENLABS_API_KEY: "$ELEVENLABS_API_KEY"
 ALLOWED_ORIGINS: "$ALLOWED_ORIGINS"
+VEO_MODEL: "$VEO_MODEL"
+VEO_LOCATION: "$VEO_LOCATION"
 EOF
 
 # Clean up temp file on exit

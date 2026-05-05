@@ -81,7 +81,12 @@ export function stripResolvedUrls(data: any): any {
 
   const cleaned = { ...data };
 
-  // Remove all *Url and *Exists fields (backend computes these)
+  // Strip execution state — these should never be persisted to the backend
+  delete cleaned.status;
+  delete cleaned.error;
+  delete cleaned.isGenerating;
+
+  // Remove all *Url and *Exists fields (backend computes these from *Ref fields)
   // Also remove any field containing base64 data
   const keysToRemove = Object.keys(cleaned).filter(
     (k) =>
@@ -91,35 +96,9 @@ export function stripResolvedUrls(data: any): any {
   );
   keysToRemove.forEach((k) => delete cleaned[k]);
 
-  // Also clean outputs object if present - this is where base64 data often ends up
-  if (cleaned.outputs && typeof cleaned.outputs === "object") {
-    const cleanedOutputs = { ...cleaned.outputs };
-
-    // Remove *Url, *Exists fields
-    // Remove image/video/images fields (these contain execution results, not config)
-    // Remove any field containing base64 data
-    const outputKeysToRemove = Object.keys(cleanedOutputs).filter(
-      (k) =>
-        k.endsWith("Url") ||
-        k.endsWith("Exists") ||
-        k === "image" ||
-        k === "video" ||
-        k === "images" ||
-        k === "videos" ||
-        isBase64Data(cleanedOutputs[k]),
-    );
-    outputKeysToRemove.forEach((k) => delete cleanedOutputs[k]);
-
-    // Also check for arrays containing base64 data
-    Object.keys(cleanedOutputs).forEach((k) => {
-      const value = cleanedOutputs[k];
-      if (Array.isArray(value) && value.some(isBase64Data)) {
-        delete cleanedOutputs[k];
-      }
-    });
-
-    cleaned.outputs = cleanedOutputs;
-  }
+  // Wipe outputs entirely — they are execution results, not configuration.
+  // On load, nodes start with empty outputs and a "ready" status.
+  cleaned.outputs = {};
 
   return cleaned;
 }
@@ -497,26 +476,18 @@ export async function loadWorkflow(workflowId: string): Promise<SavedWorkflow> {
     }
   }
 
-  // Clean up any corrupted outputs.image/video data from old saved workflows
-  // This ensures fresh asset resolution via imageUrl/videoUrl instead of stale base64
+  // Reset all execution state when loading so nodes open in a clean "ready" position.
+  // Execution results (outputs, status, error) should not carry over across sessions.
   const cleanedNodes = (nodes || []).map((node: WorkflowNode) => {
-    if (node.data?.outputs && typeof node.data.outputs === "object") {
-      const cleanedOutputs = { ...node.data.outputs };
-      // Remove potentially corrupted execution results
-      // These should be regenerated on execution, not loaded from saved state
-      delete cleanedOutputs.image;
-      delete cleanedOutputs.images;
-      delete cleanedOutputs.video;
-      delete cleanedOutputs.videos;
-      return {
-        ...node,
-        data: {
-          ...node.data,
-          outputs: cleanedOutputs,
-        },
-      };
-    }
-    return node;
+    const { error: _error, isGenerating: _ig, ...restData } = node.data as any;
+    return {
+      ...node,
+      data: {
+        ...restData,
+        status: "ready",
+        outputs: {},
+      },
+    };
   });
 
   return {

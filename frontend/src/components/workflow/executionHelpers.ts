@@ -849,7 +849,14 @@ export async function pollVideoStatus(
 
         // Get the GCS URL for downstream processing (merge videos, etc.)
         // This avoids 32MB request limit by letting backend download from URL
-        const gcsUrl = statusData.video_url || statusData.videoUrl || null;
+        // storage_uri is the gs:// fallback — backend now converts it to an HTTPS URL in video_url,
+        // but we keep it as a final safety net here in case of older backend versions
+        const gcsUrl =
+          statusData.video_url ||
+          statusData.videoUrl ||
+          (typeof statusData.storage_uri === "string" && !statusData.storage_uri.startsWith("gs://")
+            ? statusData.storage_uri
+            : null);
 
         // Try multiple possible field names for the video data (base64)
         const videoData =
@@ -882,20 +889,27 @@ export async function pollVideoStatus(
           );
         }
 
-        // Fallback: if we only have GCS URL (no base64), still return success
+        // Fallback: if we only have a URL (no base64), still return success
         if (gcsUrl) {
-          logger.info("[pollVideoStatus] No base64 data, using GCS URL directly");
+          logger.info("[pollVideoStatus] No base64 data, using URL directly");
           return {
             success: true,
-            videoUrl: gcsUrl,  // Use GCS URL as the video URL
+            videoUrl: gcsUrl,
             gcsUrl: gcsUrl,
           };
         }
 
+        console.error("[pollVideoStatus] Complete but no usable video data:", {
+          keys: Object.keys(statusData),
+          video_url: statusData.video_url,
+          storage_uri: statusData.storage_uri,
+          save_error: statusData.save_error,
+        });
         return {
           success: false,
-          error:
-            "Video generation completed but no video data returned. Check console for response details.",
+          error: statusData.save_error
+            ? `Video generated but could not be saved: ${statusData.save_error}`
+            : "Video generation completed but no video data returned",
         };
       }
 
@@ -988,7 +1002,12 @@ export async function streamVideoStatus(
         }
 
         if (data.status === "complete") {
-          const gcsUrl = data.video_url || data.videoUrl || null;
+          const gcsUrl =
+            data.video_url ||
+            data.videoUrl ||
+            (typeof data.storage_uri === "string" && !data.storage_uri.startsWith("gs://")
+              ? data.storage_uri
+              : null);
           const videoData = data.video_base64 || data.videoBase64 || data.video;
           if (videoData) {
             const videoUrl =
@@ -1000,7 +1019,12 @@ export async function streamVideoStatus(
           if (gcsUrl) {
             return { success: true, videoUrl: gcsUrl, gcsUrl };
           }
-          return { success: false, error: "Video complete but no data returned" };
+          return {
+            success: false,
+            error: data.save_error
+              ? `Video generated but could not be saved: ${data.save_error}`
+              : "Video complete but no data returned",
+          };
         }
 
         if (data.status === "error") {

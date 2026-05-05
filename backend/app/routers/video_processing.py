@@ -900,10 +900,13 @@ async def add_music_to_video(
             if has_audio and orig_vol > 0:
                 # Mix original audio with music using amerge + pan for volume control
                 # amerge is more reliable than amix for two-stream mixing
+                # Force both to stereo first so mono sources don't end up isolated to one channel,
+                # then mix with amix (normalize=0 keeps our volume settings, not amix's auto-normalization)
                 filter_complex = (
-                    f"[0:a]volume={orig_vol}[orig];"
-                    f"[1:a]volume={music_vol}[music];"
-                    f"[orig][music]amerge=inputs=2,pan=stereo|c0<c0+c2|c1<c1+c3[aout]"
+                    f"[0:a]aformat=channel_layouts=stereo,volume={orig_vol}[orig];"
+                    f"[1:a]aformat=channel_layouts=stereo,volume={music_vol}[music];"
+                    f"[orig][music]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,"
+                    f"aformat=channel_layouts=stereo[aout]"
                 )
 
                 mix_cmd = [
@@ -913,23 +916,22 @@ async def add_music_to_video(
                     "-filter_complex", filter_complex,
                     "-map", "0:v",
                     "-map", "[aout]",
-                    "-c:v", "copy",  # Preserve original video codec
+                    "-c:v", "copy",
                     "-c:a", "aac",
                     "-b:a", "192k",
                     "-shortest",
                     output_path
                 ]
 
-                logger.info(f"Running ffmpeg mix with amerge")
+                logger.info(f"Running ffmpeg mix with amix")
                 result = await run_ffmpeg_async(mix_cmd)
 
                 if result.returncode != 0:
-                    logger.warning(f"amerge failed, trying amix fallback: {get_ffmpeg_error(result.stderr)}")
-                    # Fallback to amix
+                    logger.warning(f"amix failed, trying amerge fallback: {get_ffmpeg_error(result.stderr)}")
                     filter_complex = (
-                        f"[0:a]volume={orig_vol}[orig];"
-                        f"[1:a]volume={music_vol}[music];"
-                        f"[orig][music]amix=inputs=2:duration=first:dropout_transition=2[aout]"
+                        f"[0:a]aformat=channel_layouts=stereo,volume={orig_vol}[orig];"
+                        f"[1:a]aformat=channel_layouts=stereo,volume={music_vol}[music];"
+                        f"[orig][music]amerge=inputs=2,pan=stereo|c0<c0+c2|c1<c1+c3[aout]"
                     )
                     mix_cmd = [
                         "ffmpeg", "-y",
@@ -1239,6 +1241,7 @@ class SegmentReplaceRequest(BaseModel):
     end_time: float = Field(..., description="End time in seconds for replacement")
     audio_mode: str = Field(default="keep_base", description="Audio mode: keep_base, keep_replacement, mix")
     fit_mode: str = Field(default="trim", description="Fit mode: stretch, trim, loop")
+    crop_mode: str = Field(default="center_crop", description="How to reconcile aspect ratio mismatch: center_crop (fill, crop excess) or pad (letterbox/pillarbox)")
 
 
 class SegmentReplaceResponse(BaseModel):
@@ -1404,9 +1407,20 @@ async def replace_video_segment(
             base_width = base_width + (base_width % 2)
             base_height = base_height + (base_height % 2)
             
-            # Normalization filter: scale to base dimensions, set fps to 30, set pixel format
+            # Base segments are already the right dimensions — just enforce fps/format
             normalize_filter = f"scale={base_width}:{base_height}:force_original_aspect_ratio=decrease,pad={base_width}:{base_height}:(ow-iw)/2:(oh-ih)/2,fps=30,format=yuv420p"
-            
+
+            # Replacement normalize filter: crop to fill (no black bars) or pad based on crop_mode
+            if request.crop_mode == "center_crop":
+                replacement_normalize_filter = f"scale={base_width}:{base_height}:force_original_aspect_ratio=increase,crop={base_width}:{base_height},fps=30,format=yuv420p"
+            else:
+                replacement_normalize_filter = normalize_filter
+
+            replacement_ratio = replacement_specs.get("width", base_width) / max(replacement_specs.get("height", base_height), 1)
+            base_ratio = base_width / max(base_height, 1)
+            if abs(replacement_ratio - base_ratio) > 0.05:
+                logger.info(f"Aspect ratio mismatch: base={base_ratio:.3f}, replacement={replacement_ratio:.3f}, using crop_mode={request.crop_mode}")
+
             # Use consistent audio format and rate
             audio_format_filter = "aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo"
 
@@ -1425,16 +1439,15 @@ async def replace_video_segment(
                     # Replacement too short - pad by freezing last frame
                     pad_duration = segment_duration - replacement_duration
                     logger.info(f"Padding replacement video: adding {pad_duration}s to reach {segment_duration}s")
-                    # Don't trim first - just pad to exact duration
-                    replacement_video_filter = f"setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration={pad_duration},{normalize_filter}"
+                    replacement_video_filter = f"setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration={pad_duration},{replacement_normalize_filter}"
                 elif replacement_duration > segment_duration:
                     # Replacement too long - trim to exact duration
                     logger.info(f"Trimming replacement video: {replacement_duration}s → {segment_duration}s")
-                    replacement_video_filter = f"trim=duration={segment_duration},setpts=PTS-STARTPTS,{normalize_filter}"
+                    replacement_video_filter = f"trim=duration={segment_duration},setpts=PTS-STARTPTS,{replacement_normalize_filter}"
                 else:
                     # Exact match - just normalize
                     logger.info(f"Replacement video matches segment duration exactly: {segment_duration}s")
-                    replacement_video_filter = f"setpts=PTS-STARTPTS,{normalize_filter}"
+                    replacement_video_filter = f"setpts=PTS-STARTPTS,{replacement_normalize_filter}"
                 
                 # Build video-only concat filter
                 video_filter_parts = []
@@ -1481,7 +1494,7 @@ async def replace_video_segment(
                     filter_parts.append(f"[0:v]trim=0:{request.start_time},setpts=PTS-STARTPTS,{normalize_filter}[v_before]")
                     concat_inputs.append("[v_before]")
 
-                filter_parts.append(f"[1:v]{replacement_filter},{normalize_filter}[v_replace]")
+                filter_parts.append(f"[1:v]{replacement_filter},{replacement_normalize_filter}[v_replace]")
                 concat_inputs.append("[v_replace]")
 
                 if has_after:

@@ -80,10 +80,10 @@ async def health():
         "location": settings.location,
         "firebase_project": settings.firebase_project_id,
         "models": {
-            "image": "Gemini 3 Pro Image",
-            "video": "Veo 3.1",
-            "text": "Gemini 3 Pro",
-            "upscale": "Imagen 4.0 Upscale"
+            "image": settings.gemini_image_model,
+            "video": settings.veo_model,
+            "text": settings.gemini_text_model,
+            "upscale": settings.upscale_model,
         }
     }
 

@@ -981,28 +981,21 @@ export async function executeVideoSegmentReplace(
     logger.debug("[VideoSegmentReplace] Replacing video segment");
 
     const nodeData = node.data as any;
-    const timelineMode = nodeData.timelineMode || "seconds";
 
-    let startTime = nodeData.startTime ?? 0;
-    let endTime = nodeData.endTime ?? 10;
-
-    // In percentage mode, detect actual video duration and convert
-    if (timelineMode === "percentage") {
-      const actualDuration = await getVideoDuration(baseVideo);
-      if (!actualDuration || actualDuration <= 0) {
-        return {
-          success: false,
-          error: "Could not detect base video duration for percentage conversion",
-        };
-      }
-      const startPct = nodeData.startPercent ?? 0;
-      const endPct = nodeData.endPercent ?? 100;
-      startTime = Math.round((startPct / 100) * actualDuration * 10) / 10;
-      endTime = Math.round((endPct / 100) * actualDuration * 10) / 10;
-      logger.debug(
-        `[VideoSegmentReplace] Percentage mode: ${startPct}%-${endPct}% → ${startTime}s-${endTime}s (duration: ${actualDuration}s)`
-      );
+    const actualDuration = await getVideoDuration(baseVideo);
+    if (!actualDuration || actualDuration <= 0) {
+      return {
+        success: false,
+        error: "Could not detect base video duration to convert segment percentages",
+      };
     }
+    const startPct = nodeData.startPercent ?? 20;
+    const endPct = nodeData.endPercent ?? 40;
+    const startTime = Math.round((startPct / 100) * actualDuration * 10) / 10;
+    const endTime = Math.round((endPct / 100) * actualDuration * 10) / 10;
+    logger.debug(
+      `[VideoSegmentReplace] ${startPct}%-${endPct}% → ${startTime}s-${endTime}s (duration: ${actualDuration}s)`
+    );
 
     const token = await ctx.getAuthToken();
 
@@ -1011,6 +1004,7 @@ export async function executeVideoSegmentReplace(
       end_time: endTime,
       audio_mode: nodeData.audioMode || "keep_base",
       fit_mode: nodeData.fitMode || "trim",
+      crop_mode: "center_crop",
     };
 
     if (baseVideo.startsWith("data:")) {

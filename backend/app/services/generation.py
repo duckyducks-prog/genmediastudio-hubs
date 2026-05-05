@@ -601,13 +601,21 @@ class GenerationService:
                             logger.error(f"Failed to download video from GCS: {e}")
                             # Fall through to return storage_uri as fallback
 
-                    # Fallback: return storage_uri if we couldn't download
+                    # Fallback: GCS download failed — convert gs:// URI to HTTPS public URL
+                    # so the frontend can still use the video directly
+                    https_url = None
+                    if storage_uri.startswith("gs://"):
+                        gcs_path = storage_uri[5:]  # strip "gs://"
+                        https_url = f"https://storage.googleapis.com/{gcs_path}"
+                        logger.info(f"Converted GCS URI to HTTPS URL: {https_url[:80]}...")
+
                     return VideoStatusResponse(
                         status="complete",
+                        video_url=https_url,
                         storage_uri=storage_uri,
                         mimeType=mime_type,
                         saved_to_library=False,
-                        save_error="Video returned as URL only - save manually if needed"
+                        save_error="Video saved to GCS but could not be downloaded/re-saved to library"
                     )
                 
                 return VideoStatusResponse(

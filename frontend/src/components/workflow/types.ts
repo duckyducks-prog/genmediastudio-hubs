@@ -329,12 +329,9 @@ export interface VideoWatermarkNodeData extends BaseNodeData {
 
 // VIDEO SEGMENT REPLACE node
 export interface VideoSegmentReplaceNodeData extends BaseNodeData {
-  startTime: number;
-  endTime: number;
   audioMode: "keep_base" | "keep_replacement" | "mix";
   fitMode: "stretch" | "trim" | "loop";
-  baseDuration?: number; // Auto-detected from input video
-  timelineMode: "seconds" | "percentage";
+  baseDuration?: number;
   startPercent: number;
   endPercent: number;
 }
