@@ -41,6 +41,9 @@ import {
   RefreshCw,
   Archive,
   Plus,
+  Copy,
+  CheckCircle2,
+  Circle,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { auth } from "@/lib/firebase";
@@ -81,6 +84,11 @@ const AssetLibrary = forwardRef<AssetLibraryRef, AssetLibraryProps>(
     const [isDownloadingZip, setIsDownloadingZip] = useState(false);
     const [previewAsset, setPreviewAsset] = useState<Asset | null>(null);
     const [selectedFolderId, setSelectedFolderId] = useState<string>("all");
+    const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest");
+    const [isSelectMode, setIsSelectMode] = useState(false);
+    const [selectedAssetIds, setSelectedAssetIds] = useState<Set<string>>(new Set());
+    const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
+    const [deletingFolderWithContentsId, setDeletingFolderWithContentsId] = useState<string | null>(null);
     const [creatingFolderForAsset, setCreatingFolderForAsset] = useState<string | null>(null);
     const [newFolderName, setNewFolderName] = useState("");
     const { toast } = useToast();
@@ -91,6 +99,7 @@ const AssetLibrary = forwardRef<AssetLibraryRef, AssetLibraryProps>(
       createFolder,
       renameFolder,
       deleteFolder,
+      deleteFolderWithContents,
       moveAssetToFolder,
     } = useFolders();
 
@@ -124,6 +133,7 @@ const AssetLibrary = forwardRef<AssetLibraryRef, AssetLibraryProps>(
           const data = await response.json();
           logger.debug("[DEBUG] Library data received:", data);
           logger.debug("[DEBUG] Number of assets:", data.assets?.length || 0);
+          if (data.assets?.[0]) console.log("[DEBUG] created_at sample:", data.assets[0].created_at);
 
           setAssets(data.assets || []);
           setFilteredAssets(data.assets || []);
@@ -170,16 +180,16 @@ const AssetLibrary = forwardRef<AssetLibraryRef, AssetLibraryProps>(
       }
     }, [selectedFolderId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Filter assets based on selected type filter
+    // Filter and sort assets
     useEffect(() => {
-      if (filter === "all") {
-        setFilteredAssets(assets);
-      } else {
-        setFilteredAssets(
-          assets.filter((asset) => asset.asset_type === filter),
-        );
-      }
-    }, [filter, assets]);
+      let result = filter === "all" ? assets : assets.filter((a) => a.asset_type === filter);
+      result = [...result].sort((a, b) => {
+        const aTime = new Date(a.created_at.replace(" ", "T")).getTime();
+        const bTime = new Date(b.created_at.replace(" ", "T")).getTime();
+        return sortOrder === "newest" ? bTime - aTime : aTime - bTime;
+      });
+      setFilteredAssets(result);
+    }, [filter, assets, sortOrder]);
 
     // Delete asset
     const handleDelete = async (id: string) => {
@@ -313,6 +323,108 @@ const AssetLibrary = forwardRef<AssetLibraryRef, AssetLibraryProps>(
       }
     };
 
+    // Delete folder and all its assets permanently
+    const handleDeleteFolderWithContents = async (folderId: string) => {
+      try {
+        await deleteFolderWithContents(folderId);
+        if (selectedFolderId === folderId) setSelectedFolderId("all");
+        setAssets((prev) => prev.filter((a) => a.folder_id !== folderId));
+        toast({ title: "Folder and all assets deleted" });
+      } catch (error) {
+        toast({
+          title: "Failed to delete folder",
+          description: error instanceof Error ? error.message : "Unknown error",
+          variant: "destructive",
+        });
+      } finally {
+        setDeletingFolderWithContentsId(null);
+      }
+    };
+
+    // Download a folder by id (used from sidebar)
+    const handleDownloadFolderById = async (folderId: string) => {
+      try {
+        const user = auth.currentUser;
+        const token = await user?.getIdToken();
+        const res = await fetch(API_ENDPOINTS.folders.downloadZip(folderId), {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) throw new Error(`Failed to download: ${res.status}`);
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        const folder = folders.find((f) => f.id === folderId);
+        link.download = `${folder?.name ?? "folder"}.zip`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(url);
+      } catch (error) {
+        toast({
+          title: "Download failed",
+          description: error instanceof Error ? error.message : "Unknown error",
+          variant: "destructive",
+        });
+      }
+    };
+
+    // Multi-select
+    const toggleSelectMode = () => {
+      setIsSelectMode((prev) => !prev);
+      setSelectedAssetIds(new Set());
+    };
+
+    const toggleAssetSelection = (assetId: string) => {
+      setSelectedAssetIds((prev) => {
+        const next = new Set(prev);
+        if (next.has(assetId)) next.delete(assetId);
+        else next.add(assetId);
+        return next;
+      });
+    };
+
+    const handleBulkDelete = async () => {
+      const ids = Array.from(selectedAssetIds);
+      try {
+        const user = auth.currentUser;
+        const token = await user?.getIdToken();
+        await Promise.all(
+          ids.map((id) =>
+            fetch(API_ENDPOINTS.library.delete(id), {
+              method: "DELETE",
+              headers: { Authorization: `Bearer ${token}` },
+            })
+          )
+        );
+        setAssets((prev) => prev.filter((a) => !selectedAssetIds.has(a.id)));
+        setSelectedAssetIds(new Set());
+        setBulkDeleteConfirm(false);
+        toast({ title: `${ids.length} asset${ids.length > 1 ? "s" : ""} deleted` });
+      } catch (error) {
+        toast({ title: "Bulk delete failed", variant: "destructive" });
+      }
+    };
+
+    const handleBulkDownload = async () => {
+      const selected = filteredAssets.filter((a) => selectedAssetIds.has(a.id));
+      for (const asset of selected) {
+        await handleDownload(asset);
+        await new Promise((res) => setTimeout(res, 400));
+      }
+    };
+
+    const handleBulkMove = async (folderId: string | null) => {
+      const ids = Array.from(selectedAssetIds);
+      try {
+        await Promise.all(ids.map((id) => handleMoveAsset(id, folderId)));
+        setSelectedAssetIds(new Set());
+        toast({ title: `${ids.length} asset${ids.length > 1 ? "s" : ""} moved` });
+      } catch (error) {
+        toast({ title: "Bulk move failed", variant: "destructive" });
+      }
+    };
+
     // Handle asset drag start
     const handleAssetDragStart = useCallback(
       (event: React.DragEvent, asset: Asset) => {
@@ -333,15 +445,25 @@ const AssetLibrary = forwardRef<AssetLibraryRef, AssetLibraryProps>(
       [],
     );
 
-    // Format date
-    const formatDate = (dateString: string) => {
-      const date = new Date(dateString);
+    // Format date — normalize space-separated timestamps before parsing
+    const formatDate = (dateString: string): string => {
+      if (!dateString) return "";
+      const date = new Date(dateString.replace(" ", "T"));
+      if (isNaN(date.getTime())) return "";
       return date.toLocaleDateString("en-US", {
         month: "short",
         day: "numeric",
         year: "numeric",
         hour: "2-digit",
         minute: "2-digit",
+      });
+    };
+
+    const handleCopyPrompt = (prompt: string) => {
+      navigator.clipboard.writeText(prompt).then(() => {
+        toast({ title: "Prompt copied to clipboard" });
+      }).catch(() => {
+        toast({ title: "Failed to copy prompt", variant: "destructive" });
       });
     };
 
@@ -389,13 +511,15 @@ const AssetLibrary = forwardRef<AssetLibraryRef, AssetLibraryProps>(
                   }
                 }}
                 onDeleteFolder={(id) => setDeletingFolderId(id)}
+                onDownloadFolder={handleDownloadFolderById}
+                onDeleteFolderWithContents={(id) => setDeletingFolderWithContentsId(id)}
                 onDropAsset={(assetId, folderId) => handleMoveAsset(assetId, folderId)}
               />
 
               {/* Main content */}
               <div className="flex-1 overflow-y-auto flex flex-col min-w-0">
                 {/* Toolbar */}
-                <div className="flex gap-2 mb-4">
+                <div className="flex gap-2 mb-2">
                   <Button
                     variant="outline"
                     size="sm"
@@ -407,6 +531,25 @@ const AssetLibrary = forwardRef<AssetLibraryRef, AssetLibraryProps>(
                       className={`w-4 h-4 mr-2 ${isLoading ? "animate-spin" : ""}`}
                     />
                     Refresh
+                  </Button>
+                  <Select
+                    value={sortOrder}
+                    onValueChange={(v) => setSortOrder(v as "newest" | "oldest")}
+                  >
+                    <SelectTrigger className="h-9 w-28 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="newest">Newest</SelectItem>
+                      <SelectItem value="oldest">Oldest</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    variant={isSelectMode ? "default" : "outline"}
+                    size="sm"
+                    onClick={toggleSelectMode}
+                  >
+                    {isSelectMode ? "Cancel" : "Select"}
                   </Button>
                   {selectedFolderId !== "all" && (
                     <Button
@@ -424,6 +567,69 @@ const AssetLibrary = forwardRef<AssetLibraryRef, AssetLibraryProps>(
                     </Button>
                   )}
                 </div>
+
+                {/* Bulk action bar */}
+                {isSelectMode && (
+                  <div className="flex items-center gap-2 mb-3 p-2 bg-muted rounded-md flex-wrap">
+                    <span className="text-xs text-muted-foreground shrink-0">
+                      {selectedAssetIds.size} selected
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 text-xs px-2"
+                      onClick={() => setSelectedAssetIds(new Set(filteredAssets.map((a) => a.id)))}
+                    >
+                      All
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 text-xs px-2"
+                      onClick={() => setSelectedAssetIds(new Set())}
+                      disabled={selectedAssetIds.size === 0}
+                    >
+                      None
+                    </Button>
+                    <div className="flex gap-1 ml-auto">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-xs"
+                        disabled={selectedAssetIds.size === 0}
+                        onClick={handleBulkDownload}
+                      >
+                        <Download className="w-3 h-3 mr-1" />
+                        Download
+                      </Button>
+                      <Select
+                        value=""
+                        onValueChange={(val) => handleBulkMove(val === "__remove__" ? null : val)}
+                        disabled={selectedAssetIds.size === 0}
+                      >
+                        <SelectTrigger className="h-7 w-28 text-xs">
+                          <SelectValue placeholder="Move to…" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__remove__">Uncategorized</SelectItem>
+                          {folders.map((f) => (
+                            <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        className="h-7 text-xs"
+                        disabled={selectedAssetIds.size === 0}
+                        onClick={() => setBulkDeleteConfirm(true)}
+                      >
+                        <Trash2 className="w-3 h-3 mr-1" />
+                        Delete
+                      </Button>
+                    </div>
+                  </div>
+                )}
 
                 {/* Filters */}
                 <Tabs
@@ -455,14 +661,18 @@ const AssetLibrary = forwardRef<AssetLibraryRef, AssetLibraryProps>(
                         {filteredAssets.map((asset) => (
                           <div
                             key={asset.id}
-                            className="bg-card border border-border rounded-lg overflow-hidden hover:shadow-lg transition-shadow"
+                            className={`bg-card border rounded-lg overflow-hidden hover:shadow-lg transition-shadow ${
+                              isSelectMode && selectedAssetIds.has(asset.id)
+                                ? "border-primary ring-2 ring-primary"
+                                : "border-border"
+                            }`}
                           >
                             {/* Thumbnail */}
                             <div
-                              className="relative aspect-video bg-muted cursor-grab active:cursor-grabbing"
-                              draggable
-                              onDragStart={(e) => handleAssetDragStart(e, asset)}
-                              onClick={() => setPreviewAsset(asset)}
+                              className={`relative aspect-video bg-muted ${isSelectMode ? "cursor-pointer" : "cursor-grab active:cursor-grabbing"}`}
+                              draggable={!isSelectMode}
+                              onDragStart={(e) => !isSelectMode && handleAssetDragStart(e, asset)}
+                              onClick={() => isSelectMode ? toggleAssetSelection(asset.id) : setPreviewAsset(asset)}
                             >
                               {asset.asset_type === "image" ? (
                                 <img
@@ -498,13 +708,36 @@ const AssetLibrary = forwardRef<AssetLibraryRef, AssetLibraryProps>(
                                   <VideoIcon className="w-4 h-4" />
                                 )}
                               </div>
+                              {/* Select checkbox */}
+                              {isSelectMode && (
+                                <div className="absolute top-2 left-2">
+                                  {selectedAssetIds.has(asset.id) ? (
+                                    <CheckCircle2 className="w-5 h-5 text-primary drop-shadow" />
+                                  ) : (
+                                    <Circle className="w-5 h-5 text-white drop-shadow" />
+                                  )}
+                                </div>
+                              )}
                             </div>
 
                             {/* Info */}
                             <div className="p-3 space-y-2">
-                              <p className="text-sm font-medium line-clamp-2">
-                                {asset.prompt || "No prompt"}
-                              </p>
+                              <div className="flex items-start gap-1">
+                                <p className="text-sm font-medium line-clamp-2 flex-1">
+                                  {asset.prompt || "No prompt"}
+                                </p>
+                                {asset.prompt && (
+                                  <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    className="h-5 w-5 shrink-0 mt-0.5"
+                                    onClick={() => handleCopyPrompt(asset.prompt)}
+                                    title="Copy prompt"
+                                  >
+                                    <Copy className="w-3 h-3" />
+                                  </Button>
+                                )}
+                              </div>
                               <p className="text-xs text-muted-foreground">
                                 {formatDate(asset.created_at)}
                               </p>
@@ -696,6 +929,52 @@ const AssetLibrary = forwardRef<AssetLibraryRef, AssetLibraryProps>(
           </AlertDialogContent>
         </AlertDialog>
 
+        {/* Delete Folder With Contents Confirmation */}
+        <AlertDialog
+          open={!!deletingFolderWithContentsId}
+          onOpenChange={() => setDeletingFolderWithContentsId(null)}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete Folder and All Assets?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will permanently delete the folder and every asset inside it.
+                This cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => deletingFolderWithContentsId && handleDeleteFolderWithContents(deletingFolderWithContentsId)}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                Delete Everything
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Bulk Delete Confirmation */}
+        <AlertDialog open={bulkDeleteConfirm} onOpenChange={setBulkDeleteConfirm}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete {selectedAssetIds.size} asset{selectedAssetIds.size > 1 ? "s" : ""}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleBulkDelete}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                Delete
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
         {/* Preview Dialog */}
         <AlertDialog
           open={!!previewAsset}
@@ -744,6 +1023,15 @@ const AssetLibrary = forwardRef<AssetLibraryRef, AssetLibraryProps>(
               )}
             </div>
             <AlertDialogFooter>
+              {previewAsset?.prompt && (
+                <Button
+                  variant="outline"
+                  onClick={() => handleCopyPrompt(previewAsset.prompt)}
+                >
+                  <Copy className="w-4 h-4 mr-2" />
+                  Copy Prompt
+                </Button>
+              )}
               <Button
                 variant="outline"
                 onClick={() => previewAsset && handleDownload(previewAsset)}

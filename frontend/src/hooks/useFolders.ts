@@ -78,6 +78,16 @@ export function useFolders() {
     setFolders((prev) => prev.filter((f) => f.id !== folderId));
   }, []);
 
+  const deleteFolderWithContents = useCallback(async (folderId: string): Promise<void> => {
+    const token = await getToken();
+    const res = await fetch(API_ENDPOINTS.folders.deleteWithContents(folderId), {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) throw new Error(`Failed to delete folder with contents: ${res.status}`);
+    setFolders((prev) => prev.filter((f) => f.id !== folderId));
+  }, []);
+
   const moveAssetToFolder = useCallback(
     async (assetId: string, folderId: string | null): Promise<void> => {
       const token = await getToken();
@@ -98,6 +108,7 @@ export function useFolders() {
     createFolder,
     renameFolder,
     deleteFolder,
+    deleteFolderWithContents,
     moveAssetToFolder,
   };
 }

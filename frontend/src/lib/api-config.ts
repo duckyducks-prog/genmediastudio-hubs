@@ -74,6 +74,7 @@ export const API_ENDPOINTS = {
     create: `${VEO_API_BASE_URL}/v1/folders`,
     rename: (id: string) => `${VEO_API_BASE_URL}/v1/folders/${id}`,
     delete: (id: string) => `${VEO_API_BASE_URL}/v1/folders/${id}`,
+    deleteWithContents: (id: string) => `${VEO_API_BASE_URL}/v1/folders/${id}/contents`,
     downloadZip: (id: string) => `${VEO_API_BASE_URL}/v1/folders/${id}/download`,
   },
 

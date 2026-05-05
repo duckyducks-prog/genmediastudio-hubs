@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { FolderOpen, Folder, Plus, Pencil, Trash2, Check, X } from "lucide-react";
+import { FolderOpen, Folder, Plus, Pencil, Trash2, Check, X, Archive, FolderX } from "lucide-react";
 import type { Folder as FolderType } from "@/hooks/useFolders";
 
 interface FolderSidebarProps {
@@ -11,6 +11,8 @@ interface FolderSidebarProps {
   onCreateFolder: (name: string) => void;
   onRenameFolder: (id: string, name: string) => void;
   onDeleteFolder: (id: string) => void;
+  onDownloadFolder: (id: string) => void;
+  onDeleteFolderWithContents: (id: string) => void;
   onDropAsset: (assetId: string, folderId: string) => void;
 }
 
@@ -21,6 +23,8 @@ export function FolderSidebar({
   onCreateFolder,
   onRenameFolder,
   onDeleteFolder,
+  onDownloadFolder,
+  onDeleteFolderWithContents,
   onDropAsset,
 }: FolderSidebarProps) {
   const [showInput, setShowInput] = useState(false);
@@ -133,6 +137,7 @@ export function FolderSidebar({
             <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
               <span
                 className="p-0.5 hover:text-foreground text-muted-foreground"
+                title="Rename"
                 onClick={(e) => {
                   e.stopPropagation();
                   setRenamingId(folder.id);
@@ -142,13 +147,34 @@ export function FolderSidebar({
                 <Pencil className="w-3 h-3" />
               </span>
               <span
+                className="p-0.5 hover:text-foreground text-muted-foreground"
+                title="Download as zip"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDownloadFolder(folder.id);
+                }}
+              >
+                <Archive className="w-3 h-3" />
+              </span>
+              <span
                 className="p-0.5 hover:text-destructive text-muted-foreground"
+                title="Delete folder (keep assets)"
                 onClick={(e) => {
                   e.stopPropagation();
                   onDeleteFolder(folder.id);
                 }}
               >
                 <Trash2 className="w-3 h-3" />
+              </span>
+              <span
+                className="p-0.5 hover:text-destructive text-muted-foreground"
+                title="Delete folder and all assets"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDeleteFolderWithContents(folder.id);
+                }}
+              >
+                <FolderX className="w-3 h-3" />
               </span>
             </div>
           </button>

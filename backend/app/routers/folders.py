@@ -88,6 +88,22 @@ async def download_folder_as_zip(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.delete("/{folder_id}/contents")
+async def delete_folder_with_contents(
+    folder_id: str,
+    user: dict = Depends(get_current_user),
+    service: LibraryServiceFirestore = Depends(get_library_service)
+):
+    """Delete a folder and permanently delete all its assets"""
+    try:
+        return await service.delete_folder_with_contents(folder_id=folder_id, user_id=user["uid"])
+    except AppError:
+        raise
+    except Exception as e:
+        logger.error(f"Delete folder with contents failed for user {user['email']}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.delete("/{folder_id}")
 async def delete_folder(
     folder_id: str,

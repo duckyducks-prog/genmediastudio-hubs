@@ -18,6 +18,24 @@ from app.exceptions import AssetNotFoundError, AccessDeniedError, InvalidAssetTy
 logger = setup_logger(__name__)
 
 
+def _dt_to_iso(dt) -> str:
+    """Serialize a datetime to an ISO 8601 UTC string browsers can parse.
+
+    Firestore returns timezone-aware DatetimeWithNanoseconds objects whose
+    .isoformat() already includes '+00:00'. Appending 'Z' on top produces
+    '…+00:00Z' which is invalid. This normalises both naive and aware datetimes
+    to the '…Z' form.
+    """
+    if not hasattr(dt, 'isoformat'):
+        return dt
+    iso = dt.isoformat()
+    if iso.endswith('+00:00'):
+        return iso[:-6] + 'Z'
+    if not iso.endswith('Z'):
+        return iso + 'Z'
+    return iso
+
+
 async def run_sync(func, *args, **kwargs):
     """Run a blocking function in a thread pool to avoid blocking the event loop."""
     loop = asyncio.get_event_loop()
@@ -123,7 +141,7 @@ class LibraryServiceFirestore:
             url=url,
             asset_type=asset_type,
             prompt=prompt,
-            created_at=now.isoformat() + "Z",
+            created_at=_dt_to_iso(now),
             mime_type=mime_type,
             user_id=user_id,
             folder_id=folder_id,
@@ -168,7 +186,7 @@ class LibraryServiceFirestore:
                 url=url,
                 asset_type=data["asset_type"],
                 prompt=data.get("prompt"),
-                created_at=created_at.isoformat() + "Z" if hasattr(created_at, 'isoformat') else created_at,
+                created_at=_dt_to_iso(created_at),
                 mime_type=data["mime_type"],
                 user_id=data["user_id"],
                 folder_id=data.get("folder_id"),
@@ -197,7 +215,7 @@ class LibraryServiceFirestore:
             url=url,
             asset_type=data["asset_type"],
             prompt=data.get("prompt"),
-            created_at=created_at.isoformat() + "Z" if hasattr(created_at, 'isoformat') else created_at,
+            created_at=_dt_to_iso(created_at),
             mime_type=data["mime_type"],
             user_id=data["user_id"],
             folder_id=data.get("folder_id"),
@@ -323,7 +341,7 @@ class LibraryServiceFirestore:
             id=folder_id,
             name=name,
             user_id=user_id,
-            created_at=now.isoformat() + "Z",
+            created_at=_dt_to_iso(now),
             asset_count=0,
         )
 
@@ -366,7 +384,7 @@ class LibraryServiceFirestore:
                 id=f["id"],
                 name=f["name"],
                 user_id=f["user_id"],
-                created_at=created_at.isoformat() + "Z" if hasattr(created_at, "isoformat") else created_at,
+                created_at=_dt_to_iso(created_at),
                 asset_count=counts.get(f["id"], 0),
             ))
 
@@ -387,8 +405,41 @@ class LibraryServiceFirestore:
             id=folder_id,
             name=name,
             user_id=user_id,
-            created_at=created_at.isoformat() + "Z" if hasattr(created_at, "isoformat") else created_at,
+            created_at=_dt_to_iso(created_at),
         )
+
+    async def delete_folder_with_contents(self, folder_id: str, user_id: str) -> dict:
+        """Delete a folder and permanently delete all its assets (GCS + Firestore)."""
+        from google.cloud.firestore_v1.base_query import FieldFilter
+
+        doc_ref = self.folders_ref.document(folder_id)
+        doc = await run_sync(doc_ref.get)
+        if not doc.exists:
+            raise FolderNotFoundError(folder_id)
+        data = doc.to_dict()
+        if data.get("user_id") != user_id:
+            raise AccessDeniedError()
+
+        asset_docs = await run_sync(
+            lambda: list(
+                self.assets_ref.where(filter=FieldFilter("folder_id", "==", folder_id)).stream()
+            )
+        )
+        for asset_doc in asset_docs:
+            asset_data = asset_doc.to_dict()
+            try:
+                blob = self.bucket.blob(asset_data["blob_path"])
+                exists = await run_sync(blob.exists)
+                if exists:
+                    await run_sync(blob.delete)
+            except Exception as e:
+                logger.warning(f"Failed to delete blob {asset_data.get('blob_path')}: {e}")
+            await run_sync(asset_doc.reference.delete)
+
+        logger.info(f"Permanently deleted {len(asset_docs)} assets from folder {folder_id}")
+        await run_sync(doc_ref.delete)
+        logger.info(f"Deleted folder {folder_id} with contents for user {user_id}")
+        return {"status": "deleted", "id": folder_id, "assets_deleted": len(asset_docs)}
 
     async def delete_folder(self, folder_id: str, user_id: str) -> dict:
         """Delete a folder and move its assets to uncategorized."""
@@ -493,7 +544,7 @@ class LibraryServiceFirestore:
             url=url,
             asset_type=data["asset_type"],
             prompt=data.get("prompt"),
-            created_at=created_at.isoformat() + "Z" if hasattr(created_at, "isoformat") else created_at,
+            created_at=_dt_to_iso(created_at),
             mime_type=data["mime_type"],
             user_id=data["user_id"],
             folder_id=folder_id,
