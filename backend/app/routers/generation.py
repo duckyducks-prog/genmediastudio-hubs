@@ -16,6 +16,7 @@ from app.services.generation import GenerationService
 from app.services.library_firestore import LibraryServiceFirestore
 from app.logging_config import setup_logger
 from app.exceptions import AppError
+from app.chips import resolve_chips, get_chip_list
 import base64
 import httpx
 import re
@@ -158,7 +159,7 @@ async def generate_image(
                     logger.info(f"Resolved reference image {target_idx}: {len(result)} chars")
 
         return await service.generate_image(
-            prompt=request.prompt,
+            prompt=resolve_chips(request.prompt),
             user_id=user["uid"],
             reference_images=reference_images_data,
             aspect_ratio=request.aspect_ratio,
@@ -262,7 +263,7 @@ async def generate_video(
                     reference_images_data[target_idx] = result
 
         return await service.generate_video(
-            prompt=request.prompt,
+            prompt=resolve_chips(request.prompt) if request.prompt else request.prompt,
             user_id=user["uid"],
             first_frame=first_frame_data,
             last_frame=last_frame_data,
@@ -289,7 +290,7 @@ async def generate_text(
     try:
         logger.info(f"Text generation request from user {user['email']}")
         return await service.generate_text(
-            prompt=request.prompt,
+            prompt=resolve_chips(request.prompt),
             system_prompt=request.system_prompt,
             context=request.context,
             temperature=request.temperature
@@ -424,7 +425,7 @@ async def generate_music(
     try:
         logger.info(f"Music generation request from user {user['email']}, prompt={request.prompt[:50]}...")
         return await service.generate_music(
-            prompt=request.prompt,
+            prompt=resolve_chips(request.prompt),
             user_id=user["uid"]
         )
     except AppError:
@@ -432,3 +433,9 @@ async def generate_music(
     except Exception as e:
         logger.error(f"Music generation failed for user {user['email']}: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/chips")
+async def list_chips():
+    """Return the list of available smart chips for the frontend dropdown."""
+    return {"chips": get_chip_list()}

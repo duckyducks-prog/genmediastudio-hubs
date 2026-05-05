@@ -1,6 +1,6 @@
 import { memo, useEffect } from "react";
 import { Handle, Position, NodeProps, useReactFlow } from "reactflow";
-import { Textarea } from "@/components/ui/textarea";
+import { ChipTextarea } from "../chips/ChipTextarea";
 import { PromptNodeData } from "../types";
 import { Type, CheckCircle2, Loader2, Power, Maximize2 } from "lucide-react";
 import { RunNodeButton } from "./RunNodeButton";
@@ -38,10 +38,8 @@ function PromptInputNode({ data, id }: NodeProps<PromptNodeData>) {
     }
   }, [id, data.prompt, data.outputs?.text, setNodes]);
 
-  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+  const handleChange = (newPrompt: string) => {
     if (data.readOnly) return;
-
-    const newPrompt = e.target.value;
     window.dispatchEvent(
       new CustomEvent("node-update", {
         detail: {
@@ -132,11 +130,11 @@ function PromptInputNode({ data, id }: NodeProps<PromptNodeData>) {
 
       {/* Node Content */}
       <div>
-        <Textarea
-          value={data.prompt || ''}
+        <ChipTextarea
+          value={data.prompt || ""}
           onChange={handleChange}
-          placeholder="Enter your prompt..."
-          className="min-h-[100px] nodrag"
+          placeholder="Enter your prompt... (type @ for chips)"
+          textareaClassName="min-h-[100px]"
           disabled={data.readOnly || !isEnabled}
         />
       </div>

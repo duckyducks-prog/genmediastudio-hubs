@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { X, Copy, Check, Type } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
+import { ChipTextarea } from "./chips/ChipTextarea";
 import { createPortal } from "react-dom";
 
 interface TextEditSidePanelProps {
@@ -121,16 +121,17 @@ export function TextEditSidePanel({
           </div>
         </div>
 
-        {/* Content - Full height textarea */}
+        {/* Content - Full height textarea with chip support */}
         <div className="flex-1 p-6 overflow-hidden">
-          <Textarea
+          <ChipTextarea
             ref={textareaRef}
             value={localValue}
-            onChange={(e) => setLocalValue(e.target.value)}
+            onChange={setLocalValue}
             onKeyDown={handleKeyDown}
             placeholder={placeholder}
             readOnly={readOnly}
-            className="w-full h-full resize-none font-mono text-base leading-relaxed p-4 rounded-lg"
+            className="w-full h-full"
+            textareaClassName="flex-1 min-h-0 text-base leading-relaxed"
           />
         </div>
 
