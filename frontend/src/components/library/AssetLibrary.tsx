@@ -218,14 +218,17 @@ const AssetLibrary = forwardRef<AssetLibraryRef, AssetLibraryProps>(
     // Download asset
     const handleDownload = async (asset: Asset) => {
       try {
+        const response = await fetch(asset.url);
+        if (!response.ok) throw new Error("Failed to fetch asset");
+        const blob = await response.blob();
+        const objectUrl = URL.createObjectURL(blob);
         const link = document.createElement("a");
-        link.href = asset.url;
+        link.href = objectUrl;
         link.download = `${asset.asset_type}-${asset.id}.${asset.asset_type === "image" ? "png" : "mp4"}`;
-        link.target = "_blank";
-        link.rel = "noopener noreferrer";
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
+        URL.revokeObjectURL(objectUrl);
       } catch (error) {
         console.error("Download error:", error);
         toast({
