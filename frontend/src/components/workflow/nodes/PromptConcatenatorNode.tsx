@@ -1,5 +1,6 @@
 import { memo, useEffect } from 'react';
-import { Handle, Position, NodeProps, useReactFlow } from 'reactflow';
+import { Position, NodeProps, useReactFlow } from 'reactflow';
+import { ConnectedHandle } from './ConnectedHandle';
 import { PromptConcatenatorNodeData, NODE_CONFIGURATIONS, NodeType, WorkflowNode, WorkflowEdge } from '../types';
 import { Combine, ChevronDown } from 'lucide-react';
 import { gatherNodeInputs, executeConcatenator } from '../executionHelpers';
@@ -59,7 +60,7 @@ function PromptConcatenatorNode({ data, id }: NodeProps<PromptConcatenatorNodeDa
       <div className="space-y-3 mb-3">
         {config.inputConnectors.map((input) => (
           <div key={input.id} className="flex items-center gap-2 relative h-6">
-            <Handle
+            <ConnectedHandle
               type="target"
               position={Position.Left}
               id={input.id}
@@ -128,7 +129,7 @@ function PromptConcatenatorNode({ data, id }: NodeProps<PromptConcatenatorNodeDa
       <RunNodeButton nodeId={id} disabled={data.readOnly} />
 
       {/* Output Handle - Right side */}
-      <Handle
+      <ConnectedHandle
         type="source"
         position={Position.Right}
         id="combined"

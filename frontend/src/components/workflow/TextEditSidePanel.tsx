@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { X, Copy, Check, Type } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ChipTextarea } from "./chips/ChipTextarea";
+import { ChipTextarea, ElementChipSuggestion } from "./chips/ChipTextarea";
 import { createPortal } from "react-dom";
 
 interface TextEditSidePanelProps {
@@ -12,6 +12,8 @@ interface TextEditSidePanelProps {
   onChange: (value: string) => void;
   placeholder?: string;
   readOnly?: boolean;
+  nodeId?: string;
+  elementChips?: ElementChipSuggestion[];
 }
 
 export function TextEditSidePanel({
@@ -22,6 +24,8 @@ export function TextEditSidePanel({
   onChange,
   placeholder = "Enter text...",
   readOnly = false,
+  nodeId,
+  elementChips = [],
 }: TextEditSidePanelProps) {
   const [localValue, setLocalValue] = useState(value);
   const [copied, setCopied] = useState(false);
@@ -132,6 +136,20 @@ export function TextEditSidePanel({
             readOnly={readOnly}
             className="w-full h-full"
             textareaClassName="flex-1 min-h-0 text-base leading-relaxed"
+            elementChips={elementChips}
+            onElementChipSelect={(chip) => {
+              // Update activeElements on the target node (text already inserted by ChipTextarea)
+              window.dispatchEvent(new CustomEvent("inject-scene-element", {
+                detail: {
+                  text: chip.name,
+                  skipTextAppend: true,
+                  targetNodeId: nodeId,
+                  elementId: chip.id,
+                  elementType: chip.elementType,
+                  referenceImageUrls: chip.referenceImageUrls,
+                },
+              }));
+            }}
           />
         </div>
 

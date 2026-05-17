@@ -1,6 +1,7 @@
 import { logger } from "@/lib/logger";
 import { memo, useState, useEffect, useRef, useCallback } from "react";
-import { Handle, Position, NodeProps, useReactFlow, useEdges, useNodes } from "reactflow";
+import { Position, NodeProps, useReactFlow, useEdges, useNodes } from "reactflow";
+import { ConnectedHandle } from './ConnectedHandle';
 import { Scissors, Loader2, CheckCircle2, AlertTriangle } from "lucide-react";
 import {
   Select,
@@ -340,7 +341,7 @@ function VideoSegmentReplaceNode({ data, id }: NodeProps<VideoSegmentReplaceNode
       <div className="absolute left-0 flex items-center" style={{ top: "25%", transform: "translate(-100%, -50%)" }}>
         <span className="text-[9px] text-blue-400 mr-1 whitespace-nowrap">Base Video →</span>
       </div>
-      <Handle
+      <ConnectedHandle
         type="target"
         position={Position.Left}
         id="base"
@@ -351,7 +352,7 @@ function VideoSegmentReplaceNode({ data, id }: NodeProps<VideoSegmentReplaceNode
       <div className="absolute left-0 flex items-center" style={{ top: "45%", transform: "translate(-100%, -50%)" }}>
         <span className="text-[9px] text-purple-400 mr-1 whitespace-nowrap">Replacement →</span>
       </div>
-      <Handle
+      <ConnectedHandle
         type="target"
         position={Position.Left}
         id="replacement"
@@ -498,7 +499,7 @@ function VideoSegmentReplaceNode({ data, id }: NodeProps<VideoSegmentReplaceNode
 
       <RunNodeButton nodeId={id} disabled={data.readOnly} isExecuting={isExecuting} />
 
-      <Handle
+      <ConnectedHandle
         type="source"
         position={Position.Right}
         id="video"

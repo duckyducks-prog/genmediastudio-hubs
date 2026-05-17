@@ -1,7 +1,8 @@
 "use client";
 
 import { memo } from "react";
-import { NodeProps, Handle, Position } from "reactflow";
+import { NodeProps, Position } from "reactflow";
+import { ConnectedHandle } from './ConnectedHandle';
 import { Card, CardContent } from "@/components/ui/card";
 import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
@@ -71,25 +72,28 @@ function AddMusicToVideoNode({ data, id }: NodeProps<AddMusicToVideoNodeData>) {
   return (
     <Card className={`w-[300px] bg-card border-border shadow-lg ${!isEnabled ? "opacity-50" : ""}`}>
       {/* Input Handles */}
-      <Handle
+      <ConnectedHandle
         type="target"
         position={Position.Left}
         id="video"
-        className="!w-3 !h-3 !bg-blue-500 !border-2 !border-background"
+        data-connector-type="video"
+        className="!w-3 !h-3 !border-2"
         style={{ top: 60 }}
       />
-      <Handle
+      <ConnectedHandle
         type="target"
         position={Position.Left}
         id="audio"
-        className="!w-3 !h-3 !bg-purple-500 !border-2 !border-background"
+        data-connector-type="audio"
+        className="!w-3 !h-3 !border-2"
         style={{ top: 100 }}
       />
-      <Handle
+      <ConnectedHandle
         type="target"
         position={Position.Left}
         id="audio2"
-        className="!w-3 !h-3 !bg-orange-500 !border-2 !border-background"
+        data-connector-type="audio"
+        className="!w-3 !h-3 !border-2"
         style={{ top: 140 }}
       />
 
@@ -202,8 +206,29 @@ function AddMusicToVideoNode({ data, id }: NodeProps<AddMusicToVideoNodeData>) {
           </div>
         </div>
 
+        {/* Fade Out */}
+        <div className="space-y-2 mt-3">
+          <div className="flex items-center justify-between">
+            <Label className="text-xs flex items-center gap-1 text-muted-foreground">
+              Fade Out
+            </Label>
+            <span className="text-xs text-muted-foreground">
+              {(data as any).fadeOut ?? 3}s
+            </span>
+          </div>
+          <Slider
+            value={[(data as any).fadeOut ?? 3]}
+            onValueChange={([value]) => handleUpdate("fadeOut" as any, value)}
+            min={0}
+            max={10}
+            step={0.5}
+            disabled={data.readOnly || !isEnabled}
+            className="w-full"
+          />
+        </div>
+
         {/* Status */}
-        <div className="flex items-center gap-2 text-xs text-muted-foreground mb-3">
+        <div className="flex items-center gap-2 text-xs text-muted-foreground mb-3 mt-3">
           <span>Status: {getStatusText()}</span>
         </div>
 
@@ -236,11 +261,12 @@ function AddMusicToVideoNode({ data, id }: NodeProps<AddMusicToVideoNodeData>) {
       </CardContent>
 
       {/* Output Handle */}
-      <Handle
+      <ConnectedHandle
         type="source"
         position={Position.Right}
         id="video"
-        className="!w-3 !h-3 !bg-blue-500 !border-2 !border-background"
+        data-connector-type="video"
+        className="!w-3 !h-3 !border-2"
         style={{ top: "50%" }}
       />
     </Card>

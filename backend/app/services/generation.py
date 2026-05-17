@@ -207,7 +207,8 @@ class GenerationService:
         user_id: str,
         reference_images: Optional[List[str]] = None,
         aspect_ratio: str = "1:1",
-        resolution: str = "1K"
+        resolution: str = "1K",
+        folder_id: Optional[str] = None
     ) -> ImageResponse:
         """Generate images using Gemini with retry on rate limits"""
 
@@ -298,7 +299,8 @@ class GenerationService:
                     data=img_data,
                     asset_type="image",
                     user_id=user_id,
-                    prompt=prompt
+                    prompt=prompt,
+                    folder_id=folder_id
                 )
                 if saved_asset_id is None:
                     saved_asset_id = asset_response.id
@@ -328,7 +330,8 @@ class GenerationService:
         aspect_ratio: str = "16:9",
         duration_seconds: int = 8,
         generate_audio: bool = True,
-        seed: Optional[int] = None
+        seed: Optional[int] = None,
+        folder_id: Optional[str] = None
     ) -> dict:
         """Start video generation using Veo via REST API"""
         endpoint = f"https://{settings.veo_location}-aiplatform.googleapis.com/v1/projects/{settings.project_id}/locations/{settings.veo_location}/publishers/google/models/{settings.veo_model}:predictLongRunning"
@@ -430,7 +433,8 @@ class GenerationService:
         self,
         operation_name: str,
         user_id: str,
-        prompt: Optional[str] = None
+        prompt: Optional[str] = None,
+        folder_id: Optional[str] = None
     ) -> VideoStatusResponse:
         """Check video generation status using fetchPredictOperation"""
         endpoint = f"https://{settings.veo_location}-aiplatform.googleapis.com/v1/projects/{settings.project_id}/locations/{settings.veo_location}/publishers/google/models/{settings.veo_model}:fetchPredictOperation"
@@ -529,7 +533,8 @@ class GenerationService:
                             data=video_base64,
                             asset_type="video",
                             user_id=user_id,
-                            prompt=prompt
+                            prompt=prompt,
+                            folder_id=folder_id
                         )
                         video_url = asset_response.url  # Get the GCS URL for downstream use
                         logger.info(f"Video saved to library, URL: {video_url[:80]}...")
@@ -579,7 +584,8 @@ class GenerationService:
                                     data=video_base64,
                                     asset_type="video",
                                     user_id=user_id,
-                                    prompt=prompt
+                                    prompt=prompt,
+                                    folder_id=folder_id
                                 )
                                 video_url = asset_response.url  # Get the GCS URL for downstream use
                                 logger.info(f"Video saved to library, URL: {video_url[:80]}...")

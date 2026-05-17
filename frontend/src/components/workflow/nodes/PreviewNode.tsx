@@ -1,6 +1,7 @@
 import { logger } from "@/lib/logger";
 import { memo, useState, useEffect, useRef } from "react";
-import { Handle, Position, NodeProps } from "reactflow";
+import { Position, NodeProps } from "reactflow";
+import { ConnectedHandle } from './ConnectedHandle';
 import { CheckCircle2, Loader2, Eye, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { renderWithPixi } from "@/lib/pixi-renderer";
@@ -283,7 +284,7 @@ function PreviewNode({ data, id }: NodeProps<PreviewNodeData>) {
       </div>
 
       {/* Input Handles */}
-      <Handle
+      <ConnectedHandle
         type="target"
         position={Position.Left}
         id="image"
@@ -291,7 +292,7 @@ function PreviewNode({ data, id }: NodeProps<PreviewNodeData>) {
         className="!w-3 !h-3 !border-2 !border-background"
         style={{ top: "25%", transform: "translateY(-50%)" }}
       />
-      <Handle
+      <ConnectedHandle
         type="target"
         position={Position.Left}
         id="filters"
@@ -299,7 +300,7 @@ function PreviewNode({ data, id }: NodeProps<PreviewNodeData>) {
         className="!w-3 !h-3 !border-2 !border-background"
         style={{ top: "40%", transform: "translateY(-50%)" }}
       />
-      <Handle
+      <ConnectedHandle
         type="target"
         position={Position.Left}
         id="video"
@@ -307,7 +308,7 @@ function PreviewNode({ data, id }: NodeProps<PreviewNodeData>) {
         className="!w-3 !h-3 !border-2 !border-background"
         style={{ top: "60%", transform: "translateY(-50%)" }}
       />
-      <Handle
+      <ConnectedHandle
         type="target"
         position={Position.Left}
         id="text"
@@ -319,7 +320,7 @@ function PreviewNode({ data, id }: NodeProps<PreviewNodeData>) {
       <RunNodeButton nodeId={id} disabled={data.readOnly} isExecuting={isExecuting} />
 
       {/* Output Handles */}
-      <Handle
+      <ConnectedHandle
         type="source"
         position={Position.Right}
         id="image"
@@ -327,7 +328,7 @@ function PreviewNode({ data, id }: NodeProps<PreviewNodeData>) {
         className="!w-3 !h-3 !border-2 !border-background"
         style={{ top: "40%", transform: "translateY(-50%)" }}
       />
-      <Handle
+      <ConnectedHandle
         type="source"
         position={Position.Right}
         id="video"

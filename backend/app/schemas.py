@@ -16,6 +16,7 @@ class ImageRequest(BaseModel):
     reference_images: Optional[List[str]] = Field(default=None, max_length=MAX_REFERENCE_IMAGES)
     aspect_ratio: Optional[str] = "1:1"
     resolution: Optional[str] = "1K"
+    folder_id: Optional[str] = None
 
     @field_validator('reference_images')
     @classmethod
@@ -35,6 +36,7 @@ class VideoRequest(BaseModel):
     duration_seconds: Optional[int] = Field(default=8, ge=1, le=30)
     generate_audio: Optional[bool] = True
     seed: Optional[int] = None  # For consistent voice/style generation
+    folder_id: Optional[str] = None
 
     @field_validator('reference_images')
     @classmethod
@@ -196,3 +198,23 @@ class WorkflowIdResponse(BaseModel):
 
 class WorkflowMessageResponse(BaseModel):
     message: str
+class SceneElementRequest(BaseModel):
+    name: str
+    element_type: str  # "character" | "location" | etc.
+    description: Optional[str] = None
+    reference_image_urls: List[str] = []
+    is_global: bool = False  # Only admins may set True
+    parent_element_id: Optional[str] = None  # Set for wardrobe style variants
+
+class SceneElementResponse(BaseModel):
+    id: str
+    name: str
+    element_type: str
+    description: Optional[str] = None
+    reference_image_urls: List[str] = []
+    created_at: Optional[str] = None
+    is_global: bool = False
+    parent_element_id: Optional[str] = None
+
+class SceneElementListResponse(BaseModel):
+    elements: List[SceneElementResponse]

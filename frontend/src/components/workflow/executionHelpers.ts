@@ -405,6 +405,37 @@ export function gatherNodeInputs(
     }
   });
 
+  // ELEMENT CHIPS: For GenerateImage nodes, collect reference images from active scene-element chips
+  // attached to any connected PromptInputNode. Also clean @token → plain name in the prompt so
+  // Gemini receives "Paul" not "@paul". Video generation intentionally excluded.
+  if (node.type === NodeType.GenerateImage) {
+    incomingEdges.forEach((edge) => {
+      const sourceNode = allNodes.find((n) => n.id === edge.source);
+      if (!sourceNode || sourceNode.type !== NodeType.Prompt) return;
+      const activeElements: { name: string; elementType: string; referenceImageUrls: string[] }[] = (sourceNode.data as any).activeElements ?? [];
+      for (const el of activeElements) {
+        // Add reference images
+        if (el.referenceImageUrls?.length) {
+          if (!inputs["reference_images"]) inputs["reference_images"] = [];
+          inputs["reference_images"].push(...el.referenceImageUrls);
+        }
+        // Replace @token with a gender-agnostic reference descriptor the model can act on
+        if (el.name && inputs["prompt"] && typeof inputs["prompt"] === "string") {
+          const token = el.name.toLowerCase().replace(/[^a-z0-9]/g, "");
+          const descriptor =
+            el.elementType === "character" ? "the character in the reference images" :
+            el.elementType === "location"  ? "the location in the reference images" :
+            el.elementType === "prop"      ? "the prop in the reference images" :
+            el.name;
+          inputs["prompt"] = inputs["prompt"].replace(
+            new RegExp(`@${token}\\b`, "gi"),
+            descriptor
+          );
+        }
+      }
+    });
+  }
+
   // AUTO-INCLUDE FILTERS: When a source node provides video/image but filters travel on a separate handle,
   // automatically include filters from that source node if no explicit filters edge exists.
   // This allows a single wire (e.g., Noise video → Preview video) to carry both video and filters.

@@ -1,6 +1,7 @@
 import { logger } from "@/lib/logger";
 import { memo, useEffect, useCallback, useRef } from "react";
-import { Handle, Position, NodeProps } from "reactflow";
+import { Position, NodeProps } from "reactflow";
+import { ConnectedHandle } from './ConnectedHandle';
 import { BrightnessContrastNodeData } from "../types";
 import { ModifierSlider as Slider } from "@/components/ui/modifier-slider";
 import { Sun, Power } from "lucide-react";
@@ -144,7 +145,7 @@ function BrightnessContrastNode({
       </div>
 
       {/* Input Handles */}
-      <Handle
+      <ConnectedHandle
         type="target"
         position={Position.Left}
         id="image"
@@ -152,7 +153,7 @@ function BrightnessContrastNode({
         className="!w-3 !h-3 !border-2 !border-background"
         style={{ top: "20%" }}
       />
-      <Handle
+      <ConnectedHandle
         type="target"
         position={Position.Left}
         id="video"
@@ -160,7 +161,7 @@ function BrightnessContrastNode({
         className="!w-3 !h-3 !border-2 !border-background"
         style={{ top: "40%" }}
       />
-      <Handle
+      <ConnectedHandle
         type="target"
         position={Position.Left}
         id="filters"
@@ -215,7 +216,7 @@ function BrightnessContrastNode({
       <RunNodeButton nodeId={id} disabled={data.readOnly} />
 
       {/* Output Handles */}
-      <Handle
+      <ConnectedHandle
         type="source"
         position={Position.Right}
         id="image"
@@ -223,7 +224,7 @@ function BrightnessContrastNode({
         className="!w-3 !h-3 !border-2 !border-background"
         style={{ top: "20%" }}
       />
-      <Handle
+      <ConnectedHandle
         type="source"
         position={Position.Right}
         id="video"
@@ -231,7 +232,7 @@ function BrightnessContrastNode({
         className="!w-3 !h-3 !border-2 !border-background"
         style={{ top: "40%" }}
       />
-      <Handle
+      <ConnectedHandle
         type="source"
         position={Position.Right}
         id="filters"

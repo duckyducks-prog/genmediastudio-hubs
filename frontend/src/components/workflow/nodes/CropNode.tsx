@@ -1,5 +1,6 @@
 import { memo, useEffect, useCallback, useRef, useState } from "react";
-import { Handle, Position, NodeProps } from "reactflow";
+import { Position, NodeProps } from "reactflow";
+import { ConnectedHandle } from './ConnectedHandle';
 import { CropNodeData } from "../types";
 import { Crop, Maximize2 } from "lucide-react";
 import { FilterConfig } from "@/lib/pixi-filter-configs";
@@ -534,7 +535,7 @@ function CropNode({ data, id }: NodeProps<CropNodeData>) {
       </div>
 
       {/* Input Handles */}
-      <Handle
+      <ConnectedHandle
         type="target"
         position={Position.Left}
         id="image"
@@ -542,7 +543,7 @@ function CropNode({ data, id }: NodeProps<CropNodeData>) {
         className="!w-3 !h-3 !border-2 !border-background"
         style={{ top: "30%" }}
       />
-      <Handle
+      <ConnectedHandle
         type="target"
         position={Position.Left}
         id="filters"
@@ -803,7 +804,7 @@ function CropNode({ data, id }: NodeProps<CropNodeData>) {
       <RunNodeButton nodeId={id} disabled={data.readOnly} />
 
       {/* Output Handles */}
-      <Handle
+      <ConnectedHandle
         type="source"
         position={Position.Right}
         id="image"
@@ -811,7 +812,7 @@ function CropNode({ data, id }: NodeProps<CropNodeData>) {
         className="!w-3 !h-3 !border-2 !border-background"
         style={{ top: "30%" }}
       />
-      <Handle
+      <ConnectedHandle
         type="source"
         position={Position.Right}
         id="filters"

@@ -25,19 +25,18 @@ import {
   Music,
   Mic,
   Scissors,
-  Package,
-  Loader2,
+  Captions,
 } from "lucide-react";
 import { NodeType } from "./types";
 import { Input } from "@/components/ui/input";
-import { useState, useMemo } from "react";
-import { useMyWorkflows } from "@/lib/workflow-queries";
+import { useState, useMemo, useEffect, useRef } from "react";
+import { SceneElementsPanel } from "./SceneElementsPanel";
 
 interface PaletteNode {
   type: NodeType;
   label: string;
   icon: React.ReactNode;
-  category: "input" | "modifier" | "action" | "output";
+  category: "input" | "modifier" | "action" | "output" | "utility";
   description: string;
 }
 
@@ -171,6 +170,13 @@ const paletteNodes: PaletteNode[] = [
     category: "modifier",
     description: "Extract the last frame from a video",
   },
+  {
+    type: NodeType.BurnCaptions,
+    label: "Burn Captions",
+    icon: <Captions className="w-4 h-4" />,
+    category: "modifier",
+    description: "Burn captions permanently into video frames",
+  },
 
   // ACTION NODES
   {
@@ -263,22 +269,34 @@ const paletteNodes: PaletteNode[] = [
     type: NodeType.StickyNote,
     label: "Sticky Note",
     icon: <MessageSquare className="w-4 h-4" />,
-    category: "output",
+    category: "utility",
     description: "Add documentation and notes to explain workflow steps",
   },
 ];
 
 interface NodePaletteProps {
   onAddNode: (type: NodeType) => void;
-  onImportWorkflow?: (workflowId: string, workflowName: string) => void;
 }
 
 export default function NodePalette({
   onAddNode,
-  onImportWorkflow,
 }: NodePaletteProps) {
   const [searchQuery, setSearchQuery] = useState("");
-  const { data: savedWorkflows, isLoading: workflowsLoading } = useMyWorkflows();
+  const paletteRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = paletteRef.current;
+    if (!el) return;
+    const handleMouseMove = (e: MouseEvent) => {
+      const target = (e.target as HTMLElement).closest('.palette-item') as HTMLElement | null;
+      if (!target) return;
+      const rect = target.getBoundingClientRect();
+      target.style.setProperty('--glow-x', `${((e.clientX - rect.left) / rect.width) * 100}%`);
+      target.style.setProperty('--glow-y', `${((e.clientY - rect.top) / rect.height) * 100}%`);
+    };
+    el.addEventListener('mousemove', handleMouseMove);
+    return () => el.removeEventListener('mousemove', handleMouseMove);
+  }, []);
 
   const filteredNodes = useMemo(() => {
     if (!searchQuery.trim()) {
@@ -292,22 +310,12 @@ export default function NodePalette({
     );
   }, [searchQuery]);
 
-  const filteredWorkflows = useMemo(() => {
-    if (!savedWorkflows) return [];
-    if (!searchQuery.trim()) return savedWorkflows;
-    const query = searchQuery.toLowerCase();
-    return savedWorkflows.filter(
-      (w) =>
-        w.name.toLowerCase().includes(query) ||
-        (w.description && w.description.toLowerCase().includes(query)),
-    );
-  }, [savedWorkflows, searchQuery]);
-
   const categories = {
     input: filteredNodes.filter((n) => n.category === "input"),
-    modifier: filteredNodes.filter((n) => n.category === "modifier"),
     action: filteredNodes.filter((n) => n.category === "action"),
     output: filteredNodes.filter((n) => n.category === "output"),
+    modifier: filteredNodes.filter((n) => n.category === "modifier"),
+    utility: filteredNodes.filter((n) => n.category === "utility"),
   };
 
 
@@ -317,18 +325,13 @@ export default function NodePalette({
   };
 
   return (
-    <div className="w-64 bg-card border-r border-border pl-4 pt-4 pb-4 space-y-4 overflow-y-auto h-full flex flex-col">
-      <div>
-        <h3 className="font-semibold text-sm mb-3 flex items-center gap-2 pr-4">
+    <div ref={paletteRef} className="w-64 bg-card border-r border-border flex flex-col h-full overflow-hidden">
+      {/* Header */}
+      <div className="px-4 pt-4 pb-3 shrink-0">
+        <h3 className="font-semibold text-sm mb-3 flex items-center gap-2">
           <Sparkles className="w-4 h-4 text-primary" />
           Node Library
         </h3>
-        <p className="text-xs text-muted-foreground mb-4 pr-4">
-          Drag nodes onto the canvas to build your AI workflow
-        </p>
-      </div>
-
-      <div className="relative pr-4">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
@@ -336,7 +339,7 @@ export default function NodePalette({
             placeholder="Search nodes..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-9 pr-8 h-9 text-sm"
+            className="pl-9 pr-8 h-9 text-sm focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-[rgba(252,195,220,0.5)] focus-visible:[box-shadow:0_0_2px_rgba(252,195,220,0.5)]"
           />
           {searchQuery && (
             <button
@@ -349,188 +352,57 @@ export default function NodePalette({
         </div>
       </div>
 
-      <div className="flex-1 space-y-6 overflow-y-auto">
-        {/* Input Nodes */}
-        {categories.input.length > 0 && (
-          <div className="pr-4">
-            <h4 className="text-xs font-medium text-muted-foreground uppercase mb-2 tracking-wide">
-              Inputs
-            </h4>
-            <p className="text-xs text-muted-foreground/70 mb-3">
-              Source nodes with only outputs
-            </p>
-            <div className="space-y-2">
-              {categories.input.map((node) => (
-                <button
-                  key={node.type}
-                  draggable
-                  onDragStart={(e) => handleDragStart(e, node.type)}
-                  onClick={() => onAddNode(node.type)}
-                  className="w-full flex items-start gap-2 p-3 rounded-lg bg-secondary/50 hover:bg-secondary border border-border transition-colors cursor-grab active:cursor-grabbing group"
-                >
-                  <div className="text-primary mt-0.5 group-hover:scale-110 transition-transform">
-                    {node.icon}
-                  </div>
-                  <div className="flex-1 text-left">
-                    <div className="text-sm font-medium">{node.label}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {node.description}
-                    </div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Modifier Nodes */}
-        {categories.modifier.length > 0 && (
-          <div className="pr-4">
-            <h4 className="text-xs font-medium text-muted-foreground uppercase mb-2 tracking-wide">
-              Modifiers
-            </h4>
-            <p className="text-xs text-muted-foreground/70 mb-3">
-              Transform and configure data
-            </p>
-            <div className="space-y-2">
-              {categories.modifier.map((node) => (
-                <button
-                  key={node.type}
-                  draggable
-                  onDragStart={(e) => handleDragStart(e, node.type)}
-                  onClick={() => onAddNode(node.type)}
-                  className="w-full flex items-start gap-2 p-3 rounded-lg bg-secondary/50 hover:bg-secondary border border-border transition-colors cursor-grab active:cursor-grabbing group"
-                >
-                  <div className="text-primary mt-0.5 group-hover:scale-110 transition-transform">
-                    {node.icon}
-                  </div>
-                  <div className="flex-1 text-left">
-                    <div className="text-sm font-medium">{node.label}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {node.description}
-                    </div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Action Nodes */}
-        {categories.action.length > 0 && (
-          <div className="pr-4">
-            <h4 className="text-xs font-medium text-muted-foreground uppercase mb-2 tracking-wide">
-              Actions
-            </h4>
-            <p className="text-xs text-muted-foreground/70 mb-3">
-              Execute AI operations
-            </p>
-            <div className="space-y-2">
-              {categories.action.map((node) => (
-                <button
-                  key={node.type}
-                  draggable
-                  onDragStart={(e) => handleDragStart(e, node.type)}
-                  onClick={() => onAddNode(node.type)}
-                  className="w-full flex items-start gap-2 p-3 rounded-lg bg-secondary/50 hover:bg-secondary border border-border transition-colors cursor-grab active:cursor-grabbing group"
-                >
-                  <div className="text-primary mt-0.5 group-hover:scale-110 transition-transform">
-                    {node.icon}
-                  </div>
-                  <div className="flex-1 text-left">
-                    <div className="text-sm font-medium">{node.label}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {node.description}
-                    </div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Output/Utility Nodes */}
-        {categories.output.length > 0 && (
-          <div className="pr-4">
-            <h4 className="text-xs font-medium text-muted-foreground uppercase mb-2 tracking-wide">
-              Utilities
-            </h4>
-            <p className="text-xs text-muted-foreground/70 mb-3">
-              Documentation and tools
-            </p>
-            <div className="space-y-2">
-              {categories.output.map((node) => (
-                <button
-                  key={node.type}
-                  draggable
-                  onDragStart={(e) => handleDragStart(e, node.type)}
-                  onClick={() => onAddNode(node.type)}
-                  className="w-full flex items-start gap-2 p-3 rounded-lg bg-secondary/50 hover:bg-secondary border border-border transition-colors cursor-grab active:cursor-grabbing group"
-                >
-                  <div className="text-primary mt-0.5 group-hover:scale-110 transition-transform">
-                    {node.icon}
-                  </div>
-                  <div className="flex-1 text-left">
-                    <div className="text-sm font-medium">{node.label}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {node.description}
-                    </div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-
-        {/* Saved Workflows */}
-        {(filteredWorkflows.length > 0 || workflowsLoading) && (
-          <div className="pr-4">
-            <h4 className="text-xs font-medium text-muted-foreground uppercase mb-2 tracking-wide">
-              Saved Workflows
-            </h4>
-            <p className="text-xs text-muted-foreground/70 mb-3">
-              Import as reusable compound node
-            </p>
-            {workflowsLoading ? (
-              <div className="flex items-center gap-2 py-3 text-xs text-muted-foreground">
-                <Loader2 className="w-3 h-3 animate-spin" />
-                Loading...
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {filteredWorkflows.map((workflow) => (
+      {/* Scrollable list */}
+      <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-5">
+        {([
+          { key: "input",    label: "Inputs"    },
+          { key: "action",   label: "Generate"  },
+          { key: "output",   label: "Outputs"   },
+          { key: "modifier", label: "Modifiers" },
+          { key: "utility",  label: "Utility"   },
+        ] as const).map(({ key, label }) =>
+          categories[key].length > 0 && (
+            <div key={key}>
+              <h4 className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-1.5">
+                {label}
+              </h4>
+              <div className="space-y-3">
+                {categories[key].map((node) => (
                   <button
-                    key={workflow.id}
-                    onClick={() =>
-                      onImportWorkflow?.(workflow.id!, workflow.name)
-                    }
-                    className="w-full flex items-start gap-2 p-3 rounded-lg bg-secondary/50 hover:bg-secondary border border-border transition-colors cursor-pointer group"
+                    key={node.type}
+                    draggable
+                    onDragStart={(e) => handleDragStart(e, node.type)}
+                    onClick={() => onAddNode(node.type)}
+                    className="palette-item w-full flex items-center gap-2.5 px-3 py-3 rounded-lg cursor-grab active:cursor-grabbing group"
                   >
-                    <div className="text-primary mt-0.5 group-hover:scale-110 transition-transform">
-                      <Package className="w-4 h-4" />
+                    <div className="text-primary shrink-0 group-hover:scale-110 transition-transform">
+                      {node.icon}
                     </div>
-                    <div className="flex-1 text-left">
-                      <div className="text-sm font-medium">{workflow.name}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {workflow.description || `${workflow.node_count ?? "?"} nodes`}
+                    <div className="flex-1 text-left min-w-0">
+                      <div className="text-sm font-medium leading-tight">{node.label}</div>
+                      <div className="text-xs text-muted-foreground/70 leading-snug overflow-hidden max-h-0 opacity-0 group-hover:max-h-8 group-hover:opacity-100 transition-all duration-150">
+                        {node.description}
                       </div>
                     </div>
                   </button>
                 ))}
               </div>
-            )}
-          </div>
+            </div>
+          )
         )}
 
-        {/* No results message */}
-        {searchQuery &&
-          filteredNodes.length === 0 &&
-          filteredWorkflows.length === 0 && (
-          <div className="pr-4 text-center py-8">
-            <p className="text-sm text-muted-foreground">
-              No nodes found matching "{searchQuery}"
-            </p>
+        {searchQuery && filteredNodes.length === 0 && (
+          <p className="text-center text-sm text-muted-foreground py-8">
+            No nodes found matching "{searchQuery}"
+          </p>
+        )}
+
+        {!searchQuery && (
+          <div>
+            <h4 className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-1.5">
+              Scene Elements
+            </h4>
+            <SceneElementsPanel />
           </div>
         )}
       </div>

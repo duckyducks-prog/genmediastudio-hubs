@@ -47,5 +47,6 @@ def get_collection_name(base_name: str) -> str:
 WORKFLOWS_COLLECTION = get_collection_name("workflows")
 ASSETS_COLLECTION = get_collection_name("assets")
 FOLDERS_COLLECTION = get_collection_name("folders")
+SHARED_WORKFLOWS_COLLECTION = get_collection_name("shared_workflows")
 
 logger.info(f"Firestore environment: {FIRESTORE_ENV}, using collections: {WORKFLOWS_COLLECTION}, {ASSETS_COLLECTION}, {FOLDERS_COLLECTION}")

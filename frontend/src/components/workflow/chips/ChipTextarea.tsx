@@ -10,6 +10,18 @@ import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { CHIPS, CHIP_CATEGORY_COLORS, CATEGORY_LABELS, ChipCategory } from "./chipDefinitions";
 
+// ─── Element chip types ───────────────────────────────────────────────────────
+
+export interface ElementChipSuggestion {
+  id: string;               // UUID
+  name: string;             // "Paul"
+  token: string;            // "paul" — what @token gets inserted
+  elementType: string;      // "character" | "location" | …
+  referenceImageUrls: string[];
+}
+
+// ─── Props ────────────────────────────────────────────────────────────────────
+
 interface ChipTextareaProps {
   value: string;
   onChange: (value: string) => void;
@@ -19,9 +31,12 @@ interface ChipTextareaProps {
   disabled?: boolean;
   readOnly?: boolean;
   onKeyDown?: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
+  elementChips?: ElementChipSuggestion[];
+  onElementChipSelect?: (chip: ElementChipSuggestion) => void;
 }
 
-// Parse @tokens from text that match known chips
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
 function parseActiveChips(text: string) {
   const found: Array<{ id: string; category: ChipCategory }> = [];
   const seen = new Set<string>();
@@ -38,20 +53,19 @@ function parseActiveChips(text: string) {
   return found;
 }
 
-// Returns { query, start } when cursor is right after an @ trigger, else null
-function getActiveQuery(
-  value: string,
-  cursorPos: number
-): { query: string; start: number } | null {
+function getActiveQuery(value: string, cursorPos: number): { query: string; start: number } | null {
   const before = value.slice(0, cursorPos);
   const match = before.match(/@(\w*)$/);
   if (!match) return null;
   return { query: match[1], start: cursorPos - match[0].length };
 }
 
+// ─── Component ────────────────────────────────────────────────────────────────
+
 export const ChipTextarea = forwardRef<HTMLTextAreaElement, ChipTextareaProps>(
   function ChipTextarea(
-    { value, onChange, placeholder, className = "", textareaClassName = "", disabled, readOnly, onKeyDown },
+    { value, onChange, placeholder, className = "", textareaClassName = "", disabled, readOnly, onKeyDown,
+      elementChips = [], onElementChipSelect },
     forwardedRef
   ) {
     const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -59,14 +73,46 @@ export const ChipTextarea = forwardRef<HTMLTextAreaElement, ChipTextareaProps>(
 
     useImperativeHandle(forwardedRef, () => textareaRef.current!);
 
+    // Auto-resize: start at 2 lines min, cap at MAX_HEIGHT then scroll
+    useEffect(() => {
+      const MIN_HEIGHT = 64;  // px — ~2 lines (16px font × 1.5 line-height × 2 + py-2 padding)
+      const MAX_HEIGHT = 400; // px
+      const ta = textareaRef.current;
+      if (!ta) return;
+      ta.style.height = "0px";
+      const natural = Math.max(ta.scrollHeight, MIN_HEIGHT);
+      if (natural <= MAX_HEIGHT) {
+        ta.style.height = `${natural}px`;
+        ta.style.overflowY = "hidden";
+      } else {
+        ta.style.height = `${MAX_HEIGHT}px`;
+        ta.style.overflowY = "auto";
+      }
+    }, [value]);
+
     const [dropdownOpen, setDropdownOpen] = useState(false);
     const [dropdownQuery, setDropdownQuery] = useState("");
     const [activeIndex, setActiveIndex] = useState(0);
     const [dropdownPos, setDropdownPos] = useState({ top: 0, left: 0 });
 
-    const filteredChips = CHIPS.filter((c) =>
+    const filteredStaticChips = CHIPS.filter((c) =>
       c.id.toLowerCase().startsWith(dropdownQuery.toLowerCase())
     );
+
+    const filteredElementChips = elementChips.filter((c) =>
+      c.name.toLowerCase().includes(dropdownQuery.toLowerCase()) ||
+      c.token.startsWith(dropdownQuery.toLowerCase())
+    );
+
+    // Combined list: element chips first (they're personal), then static
+    type CombinedItem =
+      | { kind: "element"; chip: ElementChipSuggestion }
+      | { kind: "static"; chip: typeof CHIPS[number] };
+
+    const combinedItems: CombinedItem[] = [
+      ...filteredElementChips.map((c) => ({ kind: "element" as const, chip: c })),
+      ...filteredStaticChips.map((c) => ({ kind: "static" as const, chip: c })),
+    ];
 
     const activeChips = parseActiveChips(value);
 
@@ -74,7 +120,6 @@ export const ChipTextarea = forwardRef<HTMLTextAreaElement, ChipTextareaProps>(
       const ta = textareaRef.current;
       if (!ta) return;
       const rect = ta.getBoundingClientRect();
-      // Position below the textarea for simplicity
       setDropdownPos({
         top: rect.bottom + window.scrollY + 4,
         left: Math.min(rect.left + window.scrollX, window.innerWidth - 260),
@@ -119,6 +164,36 @@ export const ChipTextarea = forwardRef<HTMLTextAreaElement, ChipTextareaProps>(
       [value, onChange]
     );
 
+    const selectItem = useCallback(
+      (item: CombinedItem) => {
+        if (item.kind === "static") {
+          insertChip(item.chip.id);
+        } else {
+          // Insert @token into text
+          const ta = textareaRef.current;
+          const cursorPos = ta?.selectionStart ?? value.length;
+          const active = getActiveQuery(value, cursorPos);
+          if (!active) return;
+          const before = value.slice(0, active.start);
+          const after = value.slice(cursorPos);
+          const token = item.chip.token;
+          const newValue = `${before}@${token} ${after}`;
+          onChange(newValue);
+          setDropdownOpen(false);
+          onElementChipSelect?.(item.chip);
+          requestAnimationFrame(() => {
+            if (ta) {
+              const pos = before.length + token.length + 2;
+              ta.selectionStart = pos;
+              ta.selectionEnd = pos;
+              ta.focus();
+            }
+          });
+        }
+      },
+      [value, onChange, insertChip, onElementChipSelect]
+    );
+
     const removeChip = useCallback(
       (chipId: string) => {
         const newValue = value.replace(new RegExp(`@${chipId}\\s?`, "g"), "");
@@ -128,10 +203,10 @@ export const ChipTextarea = forwardRef<HTMLTextAreaElement, ChipTextareaProps>(
     );
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      if (dropdownOpen && filteredChips.length > 0) {
+      if (dropdownOpen && combinedItems.length > 0) {
         if (e.key === "ArrowDown") {
           e.preventDefault();
-          setActiveIndex((i) => Math.min(i + 1, filteredChips.length - 1));
+          setActiveIndex((i) => Math.min(i + 1, combinedItems.length - 1));
           return;
         }
         if (e.key === "ArrowUp") {
@@ -141,7 +216,7 @@ export const ChipTextarea = forwardRef<HTMLTextAreaElement, ChipTextareaProps>(
         }
         if (e.key === "Enter" || e.key === "Tab") {
           e.preventDefault();
-          insertChip(filteredChips[activeIndex].id);
+          selectItem(combinedItems[activeIndex]);
           return;
         }
         if (e.key === "Escape") {
@@ -153,7 +228,6 @@ export const ChipTextarea = forwardRef<HTMLTextAreaElement, ChipTextareaProps>(
       onKeyDown?.(e);
     };
 
-    // Close dropdown on outside click
     useEffect(() => {
       if (!dropdownOpen) return;
       const handler = (e: MouseEvent) => {
@@ -169,7 +243,7 @@ export const ChipTextarea = forwardRef<HTMLTextAreaElement, ChipTextareaProps>(
       return () => document.removeEventListener("mousedown", handler);
     }, [dropdownOpen]);
 
-    const dropdown = dropdownOpen && filteredChips.length > 0 &&
+    const dropdown = dropdownOpen && combinedItems.length > 0 &&
       createPortal(
         <div
           ref={dropdownRef}
@@ -177,36 +251,73 @@ export const ChipTextarea = forwardRef<HTMLTextAreaElement, ChipTextareaProps>(
           className="w-64 bg-card border border-border rounded-lg shadow-2xl overflow-hidden"
           onMouseDown={(e) => e.preventDefault()}
         >
-          <div className="px-3 py-1.5 border-b border-border text-[10px] text-muted-foreground font-medium uppercase tracking-wide">
-            Smart Chips
-          </div>
-          <ul className="max-h-52 overflow-y-auto py-1">
-            {filteredChips.map((chip, i) => (
-              <li
-                key={chip.id}
-                className={`flex items-center gap-2 px-3 py-1.5 cursor-pointer text-sm transition-colors ${
-                  i === activeIndex ? "bg-muted" : "hover:bg-muted/50"
-                }`}
-                onMouseEnter={() => setActiveIndex(i)}
-                onMouseDown={() => insertChip(chip.id)}
-              >
-                <span
-                  className="text-[10px] font-semibold px-1.5 py-0.5 rounded shrink-0"
-                  style={{
-                    color: CHIP_CATEGORY_COLORS[chip.category],
-                    backgroundColor: `${CHIP_CATEGORY_COLORS[chip.category]}20`,
-                  }}
-                >
-                  {CATEGORY_LABELS[chip.category]}
-                </span>
-                <span
-                  className="font-medium"
-                  style={{ color: CHIP_CATEGORY_COLORS[chip.category] }}
-                >
-                  @{chip.id}
-                </span>
-              </li>
-            ))}
+          <ul className="max-h-60 overflow-y-auto py-1">
+            {/* Element chips section */}
+            {filteredElementChips.length > 0 && (
+              <>
+                <li className="px-3 py-1 text-[9px] text-muted-foreground font-semibold uppercase tracking-widest select-none">
+                  Characters &amp; Locations
+                </li>
+                {filteredElementChips.map((chip, i) => (
+                  <li
+                    key={chip.id}
+                    className={`flex items-center gap-2 px-3 py-1.5 cursor-pointer text-sm transition-colors ${
+                      i === activeIndex ? "bg-muted" : "hover:bg-muted/50"
+                    }`}
+                    onMouseEnter={() => setActiveIndex(i)}
+                    onMouseDown={() => selectItem({ kind: "element", chip })}
+                  >
+                    <span
+                      className="text-[10px] font-semibold px-1.5 py-0.5 rounded shrink-0"
+                      style={{ color: "hsl(var(--primary))", backgroundColor: "rgba(185,205,190,0.15)" }}
+                    >
+                      {chip.elementType === "character" ? "Char" : "Loc"}
+                    </span>
+                    <span className="font-medium" style={{ color: "hsl(var(--primary))" }}>
+                      @{chip.token}
+                    </span>
+                    <span className="text-muted-foreground text-xs truncate">{chip.name}</span>
+                  </li>
+                ))}
+              </>
+            )}
+
+            {/* Static chips section */}
+            {filteredStaticChips.length > 0 && (
+              <>
+                {filteredElementChips.length > 0 && (
+                  <li className="px-3 py-1 text-[9px] text-muted-foreground font-semibold uppercase tracking-widest select-none mt-0.5">
+                    Smart Chips
+                  </li>
+                )}
+                {filteredStaticChips.map((chip, i) => {
+                  const idx = filteredElementChips.length + i;
+                  return (
+                    <li
+                      key={chip.id}
+                      className={`flex items-center gap-2 px-3 py-1.5 cursor-pointer text-sm transition-colors ${
+                        idx === activeIndex ? "bg-muted" : "hover:bg-muted/50"
+                      }`}
+                      onMouseEnter={() => setActiveIndex(idx)}
+                      onMouseDown={() => selectItem({ kind: "static", chip })}
+                    >
+                      <span
+                        className="text-[10px] font-semibold px-1.5 py-0.5 rounded shrink-0"
+                        style={{
+                          color: CHIP_CATEGORY_COLORS[chip.category],
+                          backgroundColor: `${CHIP_CATEGORY_COLORS[chip.category]}20`,
+                        }}
+                      >
+                        {CATEGORY_LABELS[chip.category]}
+                      </span>
+                      <span className="font-medium" style={{ color: CHIP_CATEGORY_COLORS[chip.category] }}>
+                        @{chip.id}
+                      </span>
+                    </li>
+                  );
+                })}
+              </>
+            )}
           </ul>
         </div>,
         document.body
@@ -223,10 +334,11 @@ export const ChipTextarea = forwardRef<HTMLTextAreaElement, ChipTextareaProps>(
           placeholder={placeholder}
           disabled={disabled}
           readOnly={readOnly}
-          className={`nodrag w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 resize-none ${textareaClassName}`}
+          className={`nodrag w-full rounded-md bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 resize-none overflow-hidden ${textareaClassName}`}
+          style={{ border: "0.5px solid rgba(185,205,190,0.15)", outline: "none", boxShadow: "none" }}
         />
 
-        {/* Active chip badges */}
+        {/* Active static chip badges */}
         {activeChips.length > 0 && (
           <div className="flex flex-wrap gap-1">
             {activeChips.map((chip) => (

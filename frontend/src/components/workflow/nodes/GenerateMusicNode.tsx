@@ -1,5 +1,6 @@
 import { memo, useState, useEffect, useRef } from "react";
-import { Handle, Position, NodeProps } from "reactflow";
+import { Position, NodeProps } from "reactflow";
+import { ConnectedHandle } from './ConnectedHandle';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { GenerateMusicNodeData, NODE_CONFIGURATIONS, NodeType, MusicDuration } from "../types";
@@ -164,7 +165,7 @@ function GenerateMusicNode({ data, id }: NodeProps<GenerateMusicNodeData>) {
       <div className="space-y-3 mb-4">
         {config.inputConnectors.map((input) => (
           <div key={input.id} className="flex items-center gap-2 relative h-6">
-            <Handle
+            <ConnectedHandle
               type="target"
               position={Position.Left}
               id={input.id}
@@ -381,7 +382,7 @@ function GenerateMusicNode({ data, id }: NodeProps<GenerateMusicNodeData>) {
       </div>
 
       {/* Output Handle - Right side */}
-      <Handle
+      <ConnectedHandle
         type="source"
         position={Position.Right}
         id="audio"

@@ -51,7 +51,11 @@ import { Copy } from "lucide-react";
 import { NodeContextMenu } from "./NodeContextMenu";
 import { FloatingLabels } from "./FloatingLabels";
 import { NodeSearchDialog } from "./NodeSearchDialog";
+import { GhostNodeSearch } from "./GhostNodeSearch";
 import { TextEditSidePanel } from "./TextEditSidePanel";
+import { SharePanel } from "./SharePanel";
+import { SettingsPanel } from "./SettingsPanel";
+import { TemplateModePanel } from "./TemplateModePanel";
 import {
   useWorkflowNodes,
   useWorkflowEdges,
@@ -59,6 +63,7 @@ import {
 } from "@/contexts/WorkflowContext";
 import { useUnsavedChangesWarning } from "@/hooks/useUnsavedChangesWarning";
 import { nodeTypes, getDefaultNodeData } from "./registry";
+import { WorkflowRunningScreen } from "./WorkflowRunningScreen";
 
 export interface WorkflowCanvasRef {
   loadWorkflow: (
@@ -66,6 +71,7 @@ export interface WorkflowCanvasRef {
     options?: { readOnly?: boolean },
   ) => void;
   captureThumbnail: () => Promise<string | null>;
+  newWorkflow: () => void;
 }
 
 interface WorkflowCanvasProps {
@@ -87,9 +93,13 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
     const reactFlowWrapper = useRef<HTMLDivElement>(null);
     const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
     const [isLoadDialogOpen, setIsLoadDialogOpen] = useState(false);
+    const [isSharePanelOpen, setIsSharePanelOpen] = useState(false);
+    const [isTemplatePanelOpen, setIsTemplatePanelOpen] = useState(false);
+    const [isSettingsPanelOpen, setIsSettingsPanelOpen] = useState(false);
     const [currentWorkflowId, setCurrentWorkflowId] = useState<string | null>(
       null,
     );
+    const [currentWorkflowName, setCurrentWorkflowName] = useState("Untitled Workflow");
     const [copiedNodes, setCopiedNodes] = useState<WorkflowNode[]>([]);
     const [copiedEdges, setCopiedEdges] = useState<WorkflowEdge[]>([]);
     const [copiedConfig, setCopiedConfig] = useState<{
@@ -98,6 +108,9 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
     } | null>(null);
     const [isReadOnly, setIsReadOnly] = useState(false);
     const [isSearchOpen, setIsSearchOpen] = useState(false);
+    const [ghostSearch, setGhostSearch] = useState<{ x: number; y: number } | null>(null);
+    const [recentNodeTypes, setRecentNodeTypes] = useState<NodeType[]>([]);
+    const lastCursorPosRef = useRef({ x: 0, y: 0 });
     const [parallelExecution, setParallelExecution] = useState(false);
     // Compound node navigation stack (for navigate-into editing)
     const [compoundNavStack, setCompoundNavStack] = useState<CompoundNavEntry[]>([]);
@@ -234,6 +247,30 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
     }, [setNodes, edges]);
 
     // Listen for text edit panel open requests
+    // Element chips for the expanded text panel — loaded once, refreshed on scene-elements-updated
+    const [panelElementChips, setPanelElementChips] = useState<import("./chips/ChipTextarea").ElementChipSuggestion[]>([]);
+    useEffect(() => {
+      const load = () => {
+        import("@/lib/scene-elements-api").then(({ listSceneElements }) =>
+          listSceneElements().then((els) => {
+            const IMAGE_TYPES = new Set(["character", "location", "prop"]);
+            setPanelElementChips(
+              els.filter(e => IMAGE_TYPES.has(e.element_type)).map(e => ({
+                id: e.id,
+                name: e.name,
+                token: e.name.toLowerCase().replace(/[^a-z0-9]/g, ""),
+                elementType: e.element_type,
+                referenceImageUrls: e.reference_image_urls,
+              }))
+            );
+          }).catch(() => {})
+        );
+      };
+      load();
+      window.addEventListener("scene-elements-updated", load);
+      return () => window.removeEventListener("scene-elements-updated", load);
+    }, []);
+
     useEffect(() => {
       const handleOpenTextEditPanel = (event: Event) => {
         const customEvent = event as CustomEvent<{
@@ -422,7 +459,17 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
 
         if (event.key === "/" || (cmdOrCtrl && event.key === "k")) {
           event.preventDefault();
-          setIsSearchOpen(true);
+          // Ghost-node inline search at cursor position
+          const wrapper = reactFlowWrapper.current;
+          if (wrapper) {
+            const rect = wrapper.getBoundingClientRect();
+            // Position ghost in screen space, clamped to wrapper
+            const gx = Math.min(lastCursorPosRef.current.x, rect.width - 280);
+            const gy = Math.min(lastCursorPosRef.current.y, rect.height - 300);
+            setGhostSearch({ x: Math.max(8, gx), y: Math.max(8, gy) });
+          } else {
+            setIsSearchOpen(true); // fallback
+          }
         }
       };
 
@@ -874,6 +921,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
         setNodes(nodesWithReadOnly);
         setEdges(workflow.edges || []);
         setCurrentWorkflowId(workflow.id || null);
+        setCurrentWorkflowName(workflow.name || "Untitled Workflow");
 
         // Restore generation mode from saved workflow
         if (workflow.mode) {
@@ -950,6 +998,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
       isExecuting,
       executionProgress,
       totalNodes,
+      executionSteps,
     } = useWorkflowExecution(
       nodes,
       edges,
@@ -1727,13 +1776,22 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
     }, [nodes, reactFlowInstance]);
 
     // Expose loadWorkflow and captureThumbnail methods to parent
+    const newWorkflow = useCallback(() => {
+      setNodes([]);
+      setEdges([]);
+      setCurrentWorkflowId(null);
+      setIsReadOnly(false);
+      dispatch({ type: "MARK_SAVED" });
+    }, [setNodes, setEdges, dispatch]);
+
     useImperativeHandle(
       ref,
       () => ({
         loadWorkflow,
         captureThumbnail,
+        newWorkflow,
       }),
-      [loadWorkflow, captureThumbnail],
+      [loadWorkflow, captureThumbnail, newWorkflow],
     );
 
     // Listen for node execute events
@@ -1798,18 +1856,31 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
 
     return (
       <div className="flex w-full h-full">
+        {/* Full-screen running overlay */}
+        {isExecuting && (
+          <WorkflowRunningScreen steps={executionSteps} onCancel={abortWorkflow} />
+        )}
+
         {/* Node Palette - Always visible unless in read-only mode */}
         {!isReadOnly && (
           <div className="shrink-0">
             <NodePalette
               onAddNode={addNode}
-              onImportWorkflow={(id, name) => setImportWorkflow({ id, name })}
             />
           </div>
         )}
 
         {/* Canvas Area */}
-        <div ref={reactFlowWrapper} className="flex-1 relative">
+        <div
+          ref={reactFlowWrapper}
+          className="flex-1 relative"
+          onMouseMove={(e) => {
+            const rect = reactFlowWrapper.current?.getBoundingClientRect();
+            if (rect) {
+              lastCursorPosRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+            }
+          }}
+        >
           {/* Read-Only Mode Banner */}
           {isReadOnly && (
             <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 bg-purple-600/95 text-white px-4 py-2 rounded-lg shadow-lg flex items-center gap-3">
@@ -1920,15 +1991,16 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
               onAbortWorkflow={abortWorkflow}
               onResetWorkflow={resetWorkflow}
               onSaveWorkflow={handleSaveWorkflow}
-              onSaveAsNode={createCompoundFromSelection}
               onLoadWorkflow={handleLoadWorkflow}
+              onShareWorkflow={() => setIsSharePanelOpen(true)}
+              onOpenTemplateMode={() => setIsTemplatePanelOpen(true)}
+              onOpenSettings={() => setIsSettingsPanelOpen(true)}
+              exposedNodeCount={nodes.filter((n) => (n.data as any).exposed === true).length}
               isExecuting={isExecuting}
               executionProgress={executionProgress}
               totalNodes={totalNodes}
               isReadOnly={isReadOnly}
               isInsideCompound={isInsideCompound}
-              parallelExecution={parallelExecution}
-              onToggleParallelExecution={() => setParallelExecution(prev => !prev)}
             />
             <FloatingLabels nodes={nodes} />
           </ReactFlow>
@@ -2127,8 +2199,10 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
           onOpenChange={setIsSaveDialogOpen}
           nodes={nodes}
           edges={edges}
-          onSaveSuccess={(workflowId) => {
+          workflowId={currentWorkflowId ?? undefined}
+          onSaveSuccess={(workflowId, name) => {
             setCurrentWorkflowId(workflowId);
+            if (name) setCurrentWorkflowName(name);
             // Mark as saved since workflow was successfully saved to backend
             dispatch({ type: "MARK_SAVED" });
           }}
@@ -2140,6 +2214,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
           open={isLoadDialogOpen}
           onOpenChange={setIsLoadDialogOpen}
           onLoadWorkflow={loadWorkflow}
+          onNewWorkflow={() => { newWorkflow(); setIsLoadDialogOpen(false); }}
         />
 
         {/* Node Search Dialog */}
@@ -2147,6 +2222,23 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
           isOpen={isSearchOpen}
           onClose={() => setIsSearchOpen(false)}
         />
+
+        {/* Ghost-node inline search */}
+        {ghostSearch && !isReadOnly && (
+          <GhostNodeSearch
+            position={ghostSearch}
+            recentTypes={recentNodeTypes}
+            onConfirm={(nodeType, pos) => {
+              addNode(nodeType, reactFlowInstance?.screenToFlowPosition({
+                x: pos.x + (reactFlowWrapper.current?.getBoundingClientRect().left ?? 0),
+                y: pos.y + (reactFlowWrapper.current?.getBoundingClientRect().top ?? 0),
+              }) ?? pos);
+              setRecentNodeTypes(prev => [nodeType, ...prev.filter(t => t !== nodeType)].slice(0, 5));
+              setGhostSearch(null);
+            }}
+            onCancel={() => setGhostSearch(null)}
+          />
+        )}
 
         {/* Text Edit Side Panel */}
         <TextEditSidePanel
@@ -2156,6 +2248,54 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
           value={textEditPanel.value}
           onChange={handleTextEditPanelSave}
           readOnly={textEditPanel.readOnly}
+          nodeId={textEditPanel.nodeId}
+          elementChips={panelElementChips}
+        />
+
+        {/* Settings Panel */}
+        <SettingsPanel
+          isOpen={isSettingsPanelOpen}
+          onClose={() => setIsSettingsPanelOpen(false)}
+          parallelExecution={parallelExecution}
+          onToggleParallelExecution={() => setParallelExecution(prev => !prev)}
+        />
+
+        {/* Share Panel */}
+        <SharePanel
+          isOpen={isSharePanelOpen}
+          onClose={() => setIsSharePanelOpen(false)}
+          workflowId={currentWorkflowId}
+          workflowName={currentWorkflowName}
+          eligibleNodes={nodes
+            .filter(n => [NodeType.Prompt, NodeType.ImageInput, NodeType.VideoInput].includes(n.type as NodeType))
+            .map(n => ({
+              id: n.id,
+              type: n.type as NodeType,
+              label: (n.data as any).customLabel || (n.data as any).label || n.type,
+              exposed: !!(n.data as any).exposed,
+              exposedLabel: (n.data as any).exposedLabel,
+              exposedHelperText: (n.data as any).exposedHelperText,
+              exposedRequired: (n.data as any).exposedRequired,
+            }))}
+          onToggleExposed={(nodeId, exposed, config) => {
+            const node = nodes.find(n => n.id === nodeId);
+            if (!node) return;
+            window.dispatchEvent(new CustomEvent("node-update", {
+              detail: {
+                id: nodeId,
+                data: { ...node.data, exposed, ...(config && { exposedLabel: config.label, exposedHelperText: config.helperText, exposedRequired: config.required }) },
+              },
+            }));
+          }}
+        />
+
+        {/* Template Mode Panel */}
+        <TemplateModePanel
+          isOpen={isTemplatePanelOpen}
+          onClose={() => setIsTemplatePanelOpen(false)}
+          nodes={nodes}
+          isExecuting={isExecuting}
+          onGenerate={executeWorkflow}
         />
       </div>
     );

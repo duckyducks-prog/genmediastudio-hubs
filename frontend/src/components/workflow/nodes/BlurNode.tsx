@@ -1,5 +1,6 @@
 import { memo, useEffect, useCallback, useRef } from "react";
-import { Handle, Position, NodeProps } from "reactflow";
+import { Position, NodeProps } from "reactflow";
+import { ConnectedHandle } from './ConnectedHandle';
 import { BlurNodeData } from "../types";
 import { ModifierSlider as Slider } from "@/components/ui/modifier-slider";
 import { Blend } from "lucide-react";
@@ -82,7 +83,7 @@ function BlurNode({ data, id }: NodeProps<BlurNodeData>) {
         <NodeLockToggle locked={!!data.locked} onToggle={toggleLock} disabled={data.readOnly} />
       </div>
 
-      <Handle
+      <ConnectedHandle
         type="target"
         position={Position.Left}
         id="image"
@@ -90,7 +91,7 @@ function BlurNode({ data, id }: NodeProps<BlurNodeData>) {
         className="!w-3 !h-3 !border-2 !border-background"
         style={{ top: "20%" }}
       />
-      <Handle
+      <ConnectedHandle
         type="target"
         position={Position.Left}
         id="video"
@@ -98,7 +99,7 @@ function BlurNode({ data, id }: NodeProps<BlurNodeData>) {
         className="!w-3 !h-3 !border-2 !border-background"
         style={{ top: "40%" }}
       />
-      <Handle
+      <ConnectedHandle
         type="target"
         position={Position.Left}
         id="filters"
@@ -141,7 +142,7 @@ function BlurNode({ data, id }: NodeProps<BlurNodeData>) {
 
       <RunNodeButton nodeId={id} disabled={data.readOnly} />
 
-      <Handle
+      <ConnectedHandle
         type="source"
         position={Position.Right}
         id="image"
@@ -149,7 +150,7 @@ function BlurNode({ data, id }: NodeProps<BlurNodeData>) {
         className="!w-3 !h-3 !border-2 !border-background"
         style={{ top: "20%" }}
       />
-      <Handle
+      <ConnectedHandle
         type="source"
         position={Position.Right}
         id="video"
@@ -157,7 +158,7 @@ function BlurNode({ data, id }: NodeProps<BlurNodeData>) {
         className="!w-3 !h-3 !border-2 !border-background"
         style={{ top: "40%" }}
       />
-      <Handle
+      <ConnectedHandle
         type="source"
         position={Position.Right}
         id="filters"

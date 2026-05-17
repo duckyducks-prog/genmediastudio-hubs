@@ -43,6 +43,7 @@ import {
   executeVideoWatermark,
   executeVideoSegmentReplace,
   executeExtractLastFrame,
+  executeBurnCaptions,
 } from "./videoActionExecutors";
 
 // Audio executors
@@ -89,6 +90,7 @@ export const executorMap = new Map<NodeType, NodeExecutor>([
   [NodeType.VideoWatermark, executeVideoWatermark],
   [NodeType.VideoSegmentReplace, executeVideoSegmentReplace],
   [NodeType.ExtractLastFrame, executeExtractLastFrame],
+  [NodeType.BurnCaptions, executeBurnCaptions],
 
   // Audio action nodes
   [NodeType.GenerateMusic, executeGenerateMusic],

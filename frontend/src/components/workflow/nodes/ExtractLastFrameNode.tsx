@@ -1,5 +1,6 @@
 import { memo, useEffect } from "react";
-import { Handle, Position, NodeProps } from "reactflow";
+import { Position, NodeProps } from "reactflow";
+import { ConnectedHandle } from './ConnectedHandle';
 import { ExtractLastFrameNodeData, NODE_CONFIGURATIONS, NodeType } from "../types";
 import { Film, CheckCircle2, Loader2, Image as ImageIcon } from "lucide-react";
 import { RunNodeButton } from "./RunNodeButton";
@@ -108,7 +109,7 @@ function ExtractLastFrameNode({ data, id }: NodeProps<ExtractLastFrameNodeData>)
       <div className="space-y-3 mb-4">
         {config.inputConnectors.map((input) => (
           <div key={input.id} className="flex items-center gap-2 relative h-6">
-            <Handle
+            <ConnectedHandle
               type="target"
               position={Position.Left}
               id={input.id}
@@ -161,7 +162,7 @@ function ExtractLastFrameNode({ data, id }: NodeProps<ExtractLastFrameNodeData>)
       <RunNodeButton nodeId={id} disabled={data.readOnly} isExecuting={isExecuting} />
 
       {/* Output Handle - Right side */}
-      <Handle
+      <ConnectedHandle
         type="source"
         position={Position.Right}
         id="image"

@@ -2,7 +2,7 @@ import { logger } from "@/lib/logger";
 import { API_ENDPOINTS } from "@/lib/api-config";
 import { FilterConfig } from "@/lib/pixi-filter-configs";
 import { ExecutionResult, ExecutionContext } from "./types";
-import { WorkflowNode, validateMutualExclusion } from "../types";
+import { WorkflowNode, validateMutualExclusion, BurnCaptionsNodeData } from "../types";
 
 /** Load a video URL and return its duration in seconds */
 function getVideoDuration(url: string): Promise<number> {
@@ -663,6 +663,7 @@ export async function executeAddMusicToVideo(
     const requestBody: any = {
       music_volume: musicVolume,
       original_volume: originalVolume,
+      fade_out: (node.data as any).fadeOut ?? 3,
     };
 
     // Handle video input
@@ -1105,6 +1106,68 @@ export async function executeExtractLastFrame(
         error instanceof Error
           ? error.message
           : "Failed to extract frame",
+    };
+  }
+}
+
+export async function executeBurnCaptions(
+  node: WorkflowNode,
+  inputs: Record<string, any>,
+  ctx: ExecutionContext,
+): Promise<ExecutionResult> {
+  const videoInput = inputs.video;
+
+  if (!videoInput) {
+    return { success: false, error: "No video connected to Burn Captions node" };
+  }
+
+  const data = node.data as BurnCaptionsNodeData;
+
+  try {
+    logger.debug("[BurnCaptions] Burning captions into video");
+
+    const token = await ctx.getAuthToken();
+
+    const requestBody: Record<string, unknown> = {
+      font_size: data.fontSize ?? 48,
+      position: data.position ?? "bottom",
+      background_color: data.backgroundColor ?? "teal",
+    };
+
+    if (videoInput.startsWith("data:")) {
+      requestBody.video_base64 = videoInput;
+    } else {
+      requestBody.video_url = videoInput;
+    }
+
+    const response = await fetch(API_ENDPOINTS.video.burnCaptions, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(requestBody),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.detail || `Burn captions failed: ${response.status}`);
+    }
+
+    const result = await response.json();
+    const outputVideoUrl = `data:video/mp4;base64,${result.video_base64}`;
+
+    logger.debug("[BurnCaptions] Captions burned successfully");
+
+    return {
+      success: true,
+      data: { videoUrl: outputVideoUrl, outputs: { video: outputVideoUrl } },
+    };
+  } catch (error) {
+    console.error("[BurnCaptions] Failed:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Failed to burn captions",
     };
   }
 }

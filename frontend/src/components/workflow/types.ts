@@ -34,6 +34,7 @@ export enum NodeType {
   ExtractLastFrame = "extractLastFrame",
   VideoWatermark = "videoWatermark",
   VideoSegmentReplace = "videoSegmentReplace",
+  BurnCaptions = "burnCaptions",
 
   // ACTION nodes (inputs and outputs)
   GenerateVideo = "generateVideo",
@@ -130,8 +131,16 @@ export interface VideoInputNodeData extends BaseNodeData {
 }
 
 // PROMPT node
+export interface ActiveElement {
+  id: string;
+  name: string;
+  elementType: string;
+  referenceImageUrls: string[];
+}
+
 export interface PromptNodeData extends BaseNodeData {
   prompt: string;
+  activeElements?: ActiveElement[];
 }
 
 // WORKFLOW QUEUE node - queue of items for batch compound execution
@@ -173,11 +182,12 @@ export interface MergeVideosNodeData extends BaseNodeData {
 
 // ADD MUSIC TO VIDEO node - mixes audio into video
 export interface AddMusicToVideoNodeData extends BaseNodeData {
-  isMixing: boolean; // Is mixing in progress
-  musicVolume: number; // 0-100 volume percentage for audio track 1 (e.g., music)
-  track2Volume: number; // 0-100 volume percentage for audio track 2 (e.g., voice-over)
-  originalVolume: number; // 0-100 volume percentage for original video audio
-  outputVideoUrl?: string; // Output video with mixed audio
+  isMixing: boolean;
+  musicVolume: number;
+  track2Volume: number;
+  originalVolume: number;
+  fadeOut: number;
+  outputVideoUrl?: string;
 }
 
 // PROMPT CONCATENATOR node
@@ -327,6 +337,13 @@ export interface VideoWatermarkNodeData extends BaseNodeData {
   margin: number;
 }
 
+// BURN CAPTIONS node
+export interface BurnCaptionsNodeData extends BaseNodeData {
+  fontSize: number;
+  position: "bottom" | "top" | "center";
+  backgroundColor: "teal" | "magenta" | "neutral";
+}
+
 // VIDEO SEGMENT REPLACE node
 export interface VideoSegmentReplaceNodeData extends BaseNodeData {
   audioMode: "keep_base" | "keep_replacement" | "mix";
@@ -444,6 +461,7 @@ export type WorkflowNodeData =
   | CropNodeData
   | ImageCompositeNodeData
   | VideoWatermarkNodeData
+  | BurnCaptionsNodeData
   | VideoSegmentReplaceNodeData
   | ExtractLastFrameNodeData
   | GenerateVideoNodeData
@@ -1051,6 +1069,29 @@ export const NODE_CONFIGURATIONS: Record<NodeType, NodeConfiguration> = {
       {
         id: "replacement",
         label: "Replacement Video",
+        type: ConnectorType.Video,
+        required: true,
+        acceptsMultiple: false,
+      },
+    ],
+    outputConnectors: [
+      {
+        id: "video",
+        label: "Video Output",
+        type: ConnectorType.Video,
+      },
+    ],
+  },
+
+  [NodeType.BurnCaptions]: {
+    type: NodeType.BurnCaptions,
+    label: "Burn Captions",
+    category: "modifier",
+    description: "Burn captions permanently into video frames",
+    inputConnectors: [
+      {
+        id: "video",
+        label: "Video",
         type: ConnectorType.Video,
         required: true,
         acceptsMultiple: false,

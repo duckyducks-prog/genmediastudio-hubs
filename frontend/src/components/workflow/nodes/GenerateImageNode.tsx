@@ -1,6 +1,7 @@
 import { logger } from "@/lib/logger";
 import { memo, useState, useEffect, useRef } from "react";
-import { Handle, Position, NodeProps } from "reactflow";
+import { Position, NodeProps } from "reactflow";
+import { ConnectedHandle } from './ConnectedHandle';
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -300,7 +301,7 @@ function GenerateImageNode({ data, id }: NodeProps<GenerateImageNodeData>) {
               key={input.id}
               className="flex items-center gap-2 relative h-6"
             >
-              <Handle
+              <ConnectedHandle
                 type="target"
                 position={Position.Left}
                 id={input.id}
@@ -490,7 +491,7 @@ function GenerateImageNode({ data, id }: NodeProps<GenerateImageNodeData>) {
 
       {/* Output Handles - Right side */}
       <div className="space-y-2">
-        <Handle
+        <ConnectedHandle
           type="source"
           position={Position.Right}
           id="images"
@@ -498,7 +499,7 @@ function GenerateImageNode({ data, id }: NodeProps<GenerateImageNodeData>) {
           className="!w-3 !h-3 !border-2 !border-background"
           style={{ top: "40%", transform: "translateY(-50%)" }}
         />
-        <Handle
+        <ConnectedHandle
           type="source"
           position={Position.Right}
           id="image"

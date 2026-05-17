@@ -1,4 +1,38 @@
 import { logger } from "@/lib/logger";
+
+export interface ExecutionStep {
+  nodeId: string;
+  label: string;
+  status: "pending" | "active" | "completed" | "failed";
+}
+
+const NODE_STEP_LABELS: Partial<Record<string, string>> = {
+  prompt:              "Preparing prompt",
+  generateImage:       "Generating image",
+  generateVideo:       "Generating video",
+  generateMusic:       "Generating music",
+  imageInput:          "Loading image",
+  videoInput:          "Loading video",
+  imageOutput:         "Saving image",
+  videoOutput:         "Saving video",
+  textOutput:          "Generating text output",
+  mergeVideos:         "Merging videos",
+  addMusicToVideo:     "Adding music to video",
+  llm:                 "Processing with AI",
+  voiceChanger:        "Changing voice",
+  videoWatermark:      "Adding watermark",
+  videoSegmentReplace: "Replacing video segment",
+  promptConcatenator:  "Combining prompts",
+  textIterator:        "Iterating text",
+  burnCaptions:        "Burning captions",
+  workflowQueue:       "Processing queue",
+};
+
+function nodeStepLabel(node: { type?: string; data?: { label?: string; customLabel?: string } }): string {
+  const custom = node.data?.customLabel || node.data?.label;
+  if (custom && custom !== node.type) return custom;
+  return NODE_STEP_LABELS[node.type ?? ""] ?? node.type ?? "Processing";
+}
 import { useCallback, useState, useMemo, useRef } from "react";
 import {
   WorkflowNode,
@@ -105,6 +139,7 @@ export function useWorkflowExecution(
   >(new Map());
   const [totalNodes, setTotalNodes] = useState(0);
   const [abortRequested, setAbortRequested] = useState(false);
+  const [executionSteps, setExecutionSteps] = useState<ExecutionStep[]>([]);
 
   // Batch execution state
 
@@ -458,6 +493,17 @@ export function useWorkflowExecution(
     // Track total nodes for progress calculation
     setTotalNodes(executionOrder.length);
 
+    // Build execution steps for the running screen (executionOrder is an array of node IDs)
+    setExecutionSteps(executionOrder.map((nodeId) => {
+      const node = nodes.find((n) => n.id === nodeId);
+      return { nodeId, label: nodeStepLabel(node ?? { type: nodeId }), status: "pending" as const };
+    }));
+
+    // Helper to update a single step's status for the running screen
+    const updateStep = (nodeId: string, status: ExecutionStep["status"]) => {
+      setExecutionSteps((prev) => prev.map((s) => s.nodeId === nodeId ? { ...s, status } : s));
+    };
+
     // Helper function to run the workflow execution
     const runWorkflowExecution = async (): Promise<{ completed: number; failed: number }> => {
       const currentNodes: WorkflowNode[] = nodes;
@@ -586,6 +632,7 @@ export function useWorkflowExecution(
         const otherResults = await Promise.allSettled(
           otherNodes.map(async (node) => {
             progress.set(node.id, "executing");
+            updateStep(node.id, "active");
             setEdgeAnimated(node.id, true, false);
             updateNodeState(node.id, "executing");
 
@@ -667,6 +714,7 @@ export function useWorkflowExecution(
           apiResults = await Promise.allSettled(
             apiNodes.map(async (node) => {
               progress.set(node.id, "executing");
+              updateStep(node.id, "active");
               setEdgeAnimated(node.id, true, false);
               updateNodeState(node.id, "executing");
               setExecutionProgress(new Map(progress));
@@ -702,6 +750,7 @@ export function useWorkflowExecution(
           const sequentialResults: PromiseSettledResult<any>[] = [];
           for (const node of apiNodes) {
             progress.set(node.id, "executing");
+            updateStep(node.id, "active");
             setEdgeAnimated(node.id, true, false);
             updateNodeState(node.id, "executing");
             setExecutionProgress(new Map(progress));
@@ -761,6 +810,7 @@ export function useWorkflowExecution(
           if (result.status === "fulfilled") {
             if (result.value.success) {
               progress.set(node.id, "completed");
+              updateStep(node.id, "completed");
 
               // CRITICAL FIX: Preserve the outputs structure from result.value.data
               // If the execution result already has an outputs property (like GenerateImage does),
@@ -861,6 +911,7 @@ export function useWorkflowExecution(
               totalCompleted++;
             } else {
               progress.set(node.id, "error");
+              updateStep(node.id, "failed");
               setEdgeAnimated(node.id, false, false);
               updateNodeState(node.id, "error", { error: result.value.error });
               totalFailed++;
@@ -874,6 +925,7 @@ export function useWorkflowExecution(
           } else {
             // Promise rejected
             progress.set(node.id, "error");
+            updateStep(node.id, "failed");
             setEdgeAnimated(node.id, false, false);
             updateNodeState(node.id, "error", { error: String(result.reason) });
             totalFailed++;
@@ -1166,5 +1218,6 @@ export function useWorkflowExecution(
     isExecuting,
     executionProgress,
     totalNodes,
+    executionSteps,
   };
 }

@@ -1,5 +1,6 @@
 import { memo, useEffect, useCallback, useRef } from "react";
-import { Handle, Position, NodeProps } from "reactflow";
+import { Position, NodeProps } from "reactflow";
+import { ConnectedHandle } from './ConnectedHandle';
 import { NoiseNodeData } from "../types";
 import { ModifierSlider as Slider } from "@/components/ui/modifier-slider";
 import { Radio } from "lucide-react";
@@ -70,7 +71,7 @@ function NoiseNode({ data, id }: NodeProps<NoiseNodeData>) {
         </div>
       </div>
 
-      <Handle
+      <ConnectedHandle
         type="target"
         position={Position.Left}
         id="image"
@@ -78,7 +79,7 @@ function NoiseNode({ data, id }: NodeProps<NoiseNodeData>) {
         className="!w-3 !h-3 !border-2 !border-background"
         style={{ top: "20%" }}
       />
-      <Handle
+      <ConnectedHandle
         type="target"
         position={Position.Left}
         id="video"
@@ -86,7 +87,7 @@ function NoiseNode({ data, id }: NodeProps<NoiseNodeData>) {
         className="!w-3 !h-3 !border-2 !border-background"
         style={{ top: "40%" }}
       />
-      <Handle
+      <ConnectedHandle
         type="target"
         position={Position.Left}
         id="filters"
@@ -119,7 +120,7 @@ function NoiseNode({ data, id }: NodeProps<NoiseNodeData>) {
 
       <RunNodeButton nodeId={id} disabled={data.readOnly} />
 
-      <Handle
+      <ConnectedHandle
         type="source"
         position={Position.Right}
         id="image"
@@ -127,7 +128,7 @@ function NoiseNode({ data, id }: NodeProps<NoiseNodeData>) {
         className="!w-3 !h-3 !border-2 !border-background"
         style={{ top: "20%" }}
       />
-      <Handle
+      <ConnectedHandle
         type="source"
         position={Position.Right}
         id="video"
@@ -135,7 +136,7 @@ function NoiseNode({ data, id }: NodeProps<NoiseNodeData>) {
         className="!w-3 !h-3 !border-2 !border-background"
         style={{ top: "40%" }}
       />
-      <Handle
+      <ConnectedHandle
         type="source"
         position={Position.Right}
         id="filters"

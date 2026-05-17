@@ -1,5 +1,6 @@
 import { memo, useEffect } from "react";
-import { Handle, Position, NodeProps, useReactFlow } from "reactflow";
+import { Position, NodeProps, useReactFlow } from "reactflow";
+import { ConnectedHandle } from './ConnectedHandle';
 import { TextOutputNodeData, NODE_CONFIGURATIONS, NodeType } from "../types";
 import { Type, CheckCircle2, Loader2, Copy, Power } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -101,7 +102,7 @@ function TextOutputNode({ data, id }: NodeProps<TextOutputNodeData>) {
       className={`bg-card border-2 rounded-lg p-4 min-w-[300px] max-w-[400px] shadow-lg transition-colors ${getBorderColor()} ${!isEnabled ? "opacity-50" : ""}`}
     >
       {/* Input Handle */}
-      <Handle
+      <ConnectedHandle
         type="target"
         position={Position.Left}
         id="text"

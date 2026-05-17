@@ -1,6 +1,7 @@
 import { logger } from "@/lib/logger";
 import { memo, useState, useEffect } from "react";
-import { Handle, Position, NodeProps } from "reactflow";
+import { Position, NodeProps } from "reactflow";
+import { ConnectedHandle } from './ConnectedHandle';
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -227,7 +228,7 @@ function ImageOutputNode({ data, id }: NodeProps<OutputNodeData>) {
       </div>
 
       {/* Input Handles */}
-      <Handle
+      <ConnectedHandle
         type="target"
         position={Position.Left}
         id="image-input"
@@ -235,7 +236,7 @@ function ImageOutputNode({ data, id }: NodeProps<OutputNodeData>) {
         className="!w-3 !h-3 !border-2 !border-background"
         style={{ top: "40%", transform: "translateY(-50%)" }}
       />
-      <Handle
+      <ConnectedHandle
         type="target"
         position={Position.Left}
         id="filters"
@@ -337,7 +338,7 @@ function ImageOutputNode({ data, id }: NodeProps<OutputNodeData>) {
       <RunNodeButton nodeId={id} disabled={data.readOnly} isExecuting={isExecuting} />
 
       {/* Output Handle for chaining */}
-      <Handle
+      <ConnectedHandle
         type="source"
         position={Position.Right}
         id="media-output"

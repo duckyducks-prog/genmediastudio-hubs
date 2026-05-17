@@ -1,5 +1,6 @@
 import { memo, useEffect, useCallback, useRef, useState } from "react";
-import { Handle, Position, NodeProps } from "reactflow";
+import { Position, NodeProps } from "reactflow";
+import { ConnectedHandle } from './ConnectedHandle';
 import { FilmGrainNodeData } from "../types";
 import { ModifierSlider as Slider } from "@/components/ui/modifier-slider";
 import { Film, ChevronDown, ChevronUp } from "lucide-react";
@@ -182,7 +183,7 @@ function FilmGrainNode({ data, id }: NodeProps<FilmGrainNodeData>) {
         </div>
       </div>
 
-      <Handle
+      <ConnectedHandle
         type="target"
         position={Position.Left}
         id="image"
@@ -190,7 +191,7 @@ function FilmGrainNode({ data, id }: NodeProps<FilmGrainNodeData>) {
         className="!w-3 !h-3 !border-2 !border-background"
         style={{ top: "20%" }}
       />
-      <Handle
+      <ConnectedHandle
         type="target"
         position={Position.Left}
         id="video"
@@ -198,7 +199,7 @@ function FilmGrainNode({ data, id }: NodeProps<FilmGrainNodeData>) {
         className="!w-3 !h-3 !border-2 !border-background"
         style={{ top: "40%" }}
       />
-      <Handle
+      <ConnectedHandle
         type="target"
         position={Position.Left}
         id="filters"
@@ -367,7 +368,7 @@ function FilmGrainNode({ data, id }: NodeProps<FilmGrainNodeData>) {
         <RunNodeButton nodeId={id} disabled={data.readOnly} />
       </div>
 
-      <Handle
+      <ConnectedHandle
         type="source"
         position={Position.Right}
         id="image"
@@ -375,7 +376,7 @@ function FilmGrainNode({ data, id }: NodeProps<FilmGrainNodeData>) {
         className="!w-3 !h-3 !border-2 !border-background"
         style={{ top: "20%" }}
       />
-      <Handle
+      <ConnectedHandle
         type="source"
         position={Position.Right}
         id="video"
@@ -383,7 +384,7 @@ function FilmGrainNode({ data, id }: NodeProps<FilmGrainNodeData>) {
         className="!w-3 !h-3 !border-2 !border-background"
         style={{ top: "40%" }}
       />
-      <Handle
+      <ConnectedHandle
         type="source"
         position={Position.Right}
         id="filters"

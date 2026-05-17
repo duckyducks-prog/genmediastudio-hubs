@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 from app.auth import get_current_user
 from app.logging_config import setup_logger
+from app.config import settings
 from io import BytesIO
 
 logger = setup_logger(__name__)
@@ -103,6 +104,7 @@ class AddMusicRequest(BaseModel):
     audio_url: Optional[str] = Field(default=None, description="GCS/HTTP URL to audio")
     music_volume: int = Field(default=50, description="Music volume 0-100")
     original_volume: int = Field(default=100, description="Original audio volume 0-100")
+    fade_out: float = Field(default=0, ge=0, le=10, description="Fade out duration in seconds (0 = no fade)")
 
 
 class AddMusicResponse(BaseModel):
@@ -893,20 +895,20 @@ async def add_music_to_video(
             if not duration:
                 duration = video_info.get("format", {}).get("duration")
 
-            # Strategy: Use simpler, more robust approach
-            # 1. If video has audio and we want to mix: use amerge (simpler than amix)
-            # 2. If video has no audio or orig_vol is 0: just add music track
+            # Build fade filter string if fade_out is set and we know the duration
+            fade_filter = ""
+            if request.fade_out > 0 and duration:
+                dur = float(duration)
+                fade_start = max(0, dur - request.fade_out)
+                fade_filter = f",afade=t=out:st={fade_start:.2f}:d={request.fade_out:.2f}:curve=qsin"
+                logger.info(f"Applying fade out: start={fade_start:.2f}s, duration={request.fade_out}s")
 
             if has_audio and orig_vol > 0:
-                # Mix original audio with music using amerge + pan for volume control
-                # amerge is more reliable than amix for two-stream mixing
-                # Force both to stereo first so mono sources don't end up isolated to one channel,
-                # then mix with amix (normalize=0 keeps our volume settings, not amix's auto-normalization)
                 filter_complex = (
                     f"[0:a]aformat=channel_layouts=stereo,volume={orig_vol}[orig];"
                     f"[1:a]aformat=channel_layouts=stereo,volume={music_vol}[music];"
                     f"[orig][music]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,"
-                    f"aformat=channel_layouts=stereo[aout]"
+                    f"aformat=channel_layouts=stereo{fade_filter}[aout]"
                 )
 
                 mix_cmd = [
@@ -931,7 +933,7 @@ async def add_music_to_video(
                     filter_complex = (
                         f"[0:a]aformat=channel_layouts=stereo,volume={orig_vol}[orig];"
                         f"[1:a]aformat=channel_layouts=stereo,volume={music_vol}[music];"
-                        f"[orig][music]amerge=inputs=2,pan=stereo|c0<c0+c2|c1<c1+c3[aout]"
+                        f"[orig][music]amerge=inputs=2,pan=stereo|c0<c0+c2|c1<c1+c3{fade_filter}[aout]"
                     )
                     mix_cmd = [
                         "ffmpeg", "-y",
@@ -963,13 +965,12 @@ async def add_music_to_video(
                     output_path
                 ]
 
-                # Apply volume if not 100%
-                if music_vol != 1.0:
+                if music_vol != 1.0 or fade_filter:
                     mix_cmd = [
                         "ffmpeg", "-y",
                         "-i", video_path,
                         "-i", audio_path,
-                        "-filter_complex", f"[1:a]volume={music_vol}[aout]",
+                        "-filter_complex", f"[1:a]volume={music_vol}{fade_filter}[aout]",
                         "-map", "0:v",
                         "-map", "[aout]",
                         "-c:v", "copy",
@@ -1623,4 +1624,378 @@ async def replace_video_segment(
         raise
     except Exception as e:
         logger.error(f"Segment replace failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── Burn Captions ────────────────────────────────────────────────────────────
+
+import re
+
+_FONTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "fonts")
+
+CAPTION_BG_COLORS = {
+    "teal": "#124548",
+    "magenta": "#46062B",
+    "neutral": "#141414",
+}
+
+
+class BurnCaptionsRequest(BaseModel):
+    video_base64: Optional[str] = None
+    video_url: Optional[str] = None
+    font_size: int = Field(default=48, ge=8, le=120)
+    position: str = Field(default="bottom", description="'bottom' | 'top' | 'center'")
+    background_color: str = Field(default="teal", description="'teal' | 'magenta' | 'neutral'")
+
+
+class BurnCaptionsResponse(BaseModel):
+    video_base64: str
+    mime_type: str = "video/mp4"
+
+
+
+def _strip_punct(s: str) -> str:
+    """Remove all non-alphanumeric characters for fuzzy comparison."""
+    return re.sub(r"[^a-zA-Z0-9']", "", s).lower()
+
+
+def _merge_punctuation(api_words, full_text: str) -> list[dict]:
+    """Align punctuated tokens from full_text back onto word timestamps.
+
+    Whisper's words array strips punctuation; the full text has it.
+    Walk both lists in parallel, matching by stripped form, and use
+    the punctuated token from full_text as the display word.
+    """
+    tokens = full_text.split()
+    result = []
+    ti = 0
+
+    for w in api_words:
+        bare = _strip_punct(w.word)
+        matched_token = w.word  # fallback: use original unpunctuated word
+
+        if ti < len(tokens):
+            candidate = tokens[ti]
+            if _strip_punct(candidate) == bare:
+                matched_token = candidate
+                ti += 1
+            else:
+                # Try skipping one token in case of a split mismatch
+                if ti + 1 < len(tokens) and _strip_punct(tokens[ti + 1]) == bare:
+                    ti += 1
+                    matched_token = tokens[ti]
+                    ti += 1
+
+        result.append({"word": matched_token, "start": w.start, "end": w.end})
+
+    return result
+
+
+async def _transcribe_video_whisper(video_path: str) -> list:
+    """Extract audio from video and transcribe via OpenAI Whisper API.
+    Returns (start_sec, end_sec, text) tuples grouped in 4-word chunks."""
+    import openai
+
+    if not settings.openai_api_key:
+        raise Exception("OpenAI API key not configured (OPENAI_API_KEY is unset)")
+
+    audio_path = video_path.replace(".mp4", "_audio.mp3")
+    extract_cmd = [
+        "ffmpeg", "-y", "-i", video_path,
+        "-vn", "-acodec", "libmp3lame", "-q:a", "4",
+        "-ar", "16000", "-ac", "1",
+        audio_path,
+    ]
+    extract_result = await run_ffmpeg_async(extract_cmd, timeout=60)
+    if extract_result.returncode != 0:
+        raise Exception(f"Audio extraction failed: {get_ffmpeg_error(extract_result.stderr)}")
+
+    audio_size = os.path.getsize(audio_path)
+    if audio_size > 25 * 1024 * 1024:
+        raise Exception(
+            f"Audio is {audio_size // (1024 * 1024)} MB — OpenAI Whisper API limit is 25 MB. "
+            "Shorten the video or split it first."
+        )
+
+    client = openai.AsyncOpenAI(api_key=settings.openai_api_key)
+    with open(audio_path, "rb") as f:
+        transcript = await client.audio.transcriptions.create(
+            model="whisper-1",
+            file=f,
+            response_format="verbose_json",
+            timestamp_granularities=["word"],
+        )
+
+    words = transcript.words or []
+    logger.info(f"[BurnCaptions] Whisper returned {len(words)} words")
+
+    if not words:
+        raise Exception("Whisper returned no words — video may have no speech")
+
+    full_text = transcript.text or ""
+    word_dicts = _merge_punctuation(words, full_text)
+    logger.info(f"[BurnCaptions] {len(word_dicts)} words, punctuation merged from transcript text")
+
+    return _chunk_words(word_dicts)
+
+
+MAX_WORDS = 7
+MAX_DURATION = 2.5
+MIN_CHUNK_FOR_SOFT_BREAK = 3
+PAUSE_THRESHOLD = 0.5
+
+HARD_BREAK_CHARS = set(".!?")
+SOFT_BREAK_CHARS = set(",;:—")
+
+
+def _chunk_words(words: list[dict]) -> list:
+    """Group words into caption chunks using punctuation, length, duration, and pause rules."""
+    entries = []
+    current = []
+
+    def flush():
+        if not current:
+            return
+        valid = [w for w in current if w["start"] is not None and w["end"] is not None]
+        if not valid:
+            current.clear()
+            return
+        text = " ".join(w["word"] for w in current)
+        if text and valid[-1]["end"] > valid[0]["start"]:
+            entries.append((valid[0]["start"], valid[-1]["end"], text))
+        current.clear()
+
+    for i, word in enumerate(words):
+        current.append(word)
+
+        last_char = word["word"].rstrip()[-1] if word["word"].rstrip() else ""
+        valid_in_chunk = [w for w in current if w["start"] is not None and w["end"] is not None]
+        duration = (valid_in_chunk[-1]["end"] - valid_in_chunk[0]["start"]) if len(valid_in_chunk) >= 2 else 0
+
+        if last_char in HARD_BREAK_CHARS:
+            flush()
+            continue
+
+        if last_char in SOFT_BREAK_CHARS and len(current) >= MIN_CHUNK_FOR_SOFT_BREAK:
+            flush()
+            continue
+
+        if len(current) >= MAX_WORDS or duration >= MAX_DURATION:
+            flush()
+            continue
+
+        if i + 1 < len(words):
+            next_word = words[i + 1]
+            if (word["end"] is not None and next_word["start"] is not None
+                    and next_word["start"] - word["end"] >= PAUSE_THRESHOLD):
+                flush()
+                continue
+
+    flush()
+    return entries
+
+
+def _ass_timestamp(seconds: float) -> str:
+    """Convert seconds to ASS timestamp format (H:MM:SS.cc)."""
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = seconds % 60
+    return f"{h}:{m:02d}:{s:05.2f}"
+
+
+SAFE_BOTTOM = {
+    "9:16": 0.75,
+    "16:9": 0.88,
+    "1:1": 0.82,
+    "custom": 0.85,
+}
+
+
+def _detect_aspect(w: int, h: int) -> str:
+    ratio = w / h
+    if 0.5 < ratio < 0.6:
+        return "9:16"
+    elif 0.95 < ratio < 1.05:
+        return "1:1"
+    elif 1.7 < ratio < 1.8:
+        return "16:9"
+    return "custom"
+
+
+def _compute_margin_v(height: int, aspect: str) -> int:
+    return int(height * (1 - SAFE_BOTTOM[aspect]))
+
+
+def _compute_font_size(height: int, base_size: int = 48) -> int:
+    return int(base_size * (height / 1080))
+
+
+def _hex_to_ass_color(hex_color: str, alpha: int = 0) -> str:
+    """Convert #RRGGBB to ASS &HAABBGGRR format."""
+    r = int(hex_color[1:3], 16)
+    g = int(hex_color[3:5], 16)
+    b = int(hex_color[5:7], 16)
+    return f"&H{alpha:02X}{b:02X}{g:02X}{r:02X}"
+
+
+def _build_ass_file(
+    entries: list,
+    video_width: int = 1920,
+    video_height: int = 1080,
+    font_size: int = 48,
+    position: str = "bottom",
+    background_color: str = "teal",
+) -> str:
+    """Build an ASS subtitle file with aspect-ratio-aware placement and a single default style."""
+    aspect = _detect_aspect(video_width, video_height)
+    font_size = int(font_size * (video_height / 1080))
+    alignment = {"top": 8, "center": 5, "bottom": 2}.get(position, 2)
+    if position == "center":
+        margin_v = int(video_height * 0.40)
+    else:
+        margin_v = _compute_margin_v(video_height, aspect)
+    outline_size = max(4, int(8 * (video_height / 1080)))
+    shadow_size = 0
+
+    bg_hex = CAPTION_BG_COLORS.get(background_color, CAPTION_BG_COLORS["teal"])
+    box_color = _hex_to_ass_color(bg_hex, alpha=0x00)
+
+    header = (
+        "[Script Info]\n"
+        "ScriptType: v4.00+\n"
+        f"PlayResX: {video_width}\n"
+        f"PlayResY: {video_height}\n"
+        "WrapStyle: 0\n"
+        "\n"
+        "[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
+        "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
+        "Alignment, MarginL, MarginR, MarginV, Encoding\n"
+        f"Style: Default,HubSpot Sans Book,{font_size},&H00FFFFFF,&H000000FF,{box_color},&H00000000,"
+        f"0,0,0,0,100,100,0,0,3,{outline_size},0,"
+        f"{alignment},40,40,{margin_v},1\n"
+        "\n"
+        "[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+    )
+
+    cx = video_width // 2
+    if position == "top":
+        caption_y = int(video_height * 0.25)
+    elif position == "center":
+        caption_y = int(video_height * 0.50)
+    else:
+        caption_y = int(video_height * 0.80)
+
+    lines = []
+    for start, end, text in entries:
+        start_ts = _ass_timestamp(start)
+        end_ts = _ass_timestamp(end)
+        escaped = text.replace("\\", "\\\\").replace("{", "\\{").replace("}", "\\}")
+        lines.append(
+            f"Dialogue: 0,{start_ts},{end_ts},Default,,0,0,0,,"
+            f"{{\\an5\\pos({cx},{caption_y})}}{escaped}"
+        )
+
+    return header + "\n".join(lines) + "\n"
+
+
+@router.post("/burn-captions", response_model=BurnCaptionsResponse)
+async def burn_captions_to_video(
+    request: BurnCaptionsRequest,
+    user: dict = Depends(get_current_user)
+):
+    """Transcribe video audio with OpenAI Whisper and burn synced captions using ASS subtitles."""
+    try:
+        logger.info(f"Burn captions request from {user['email']}, font_size={request.font_size}")
+
+        if not request.video_base64 and not request.video_url:
+            raise HTTPException(status_code=400, detail="Either video_base64 or video_url must be provided")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            if request.video_url:
+                try:
+                    video_bytes = await download_video_from_url(request.video_url)
+                except httpx.HTTPError as e:
+                    raise HTTPException(status_code=400, detail=f"Failed to download video: {e}")
+            else:
+                video_bytes = clean_base64(request.video_base64)
+
+            video_path = os.path.join(tmpdir, "input.mp4")
+            with open(video_path, "wb") as f:
+                f.write(video_bytes)
+
+            output_path = os.path.join(tmpdir, "output.mp4")
+
+            # Transcribe with OpenAI Whisper
+            try:
+                entries = await _transcribe_video_whisper(video_path)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Transcription failed: {e}")
+
+            if not entries:
+                raise HTTPException(status_code=500, detail="Transcription returned no captions — check that the video has clear speech")
+
+            # Probe video dimensions for ASS PlayRes
+            probe_cmd = [
+                "ffprobe", "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=width,height",
+                "-of", "csv=p=0",
+                video_path,
+            ]
+            probe_result = await run_ffmpeg_async(probe_cmd, timeout=10)
+            if probe_result.returncode == 0 and probe_result.stdout.strip():
+                parts = probe_result.stdout.strip().split(",")
+                vid_w, vid_h = int(parts[0]), int(parts[1])
+            else:
+                vid_w, vid_h = 1920, 1080
+
+            aspect = _detect_aspect(vid_w, vid_h)
+            logger.info(f"[BurnCaptions] Detected {vid_w}x{vid_h}, aspect={aspect}, "
+                        f"font_size={_compute_font_size(vid_h)}, margin_v={_compute_margin_v(vid_h, aspect)}")
+
+            ass_content = _build_ass_file(
+                entries, video_width=vid_w, video_height=vid_h,
+                font_size=request.font_size,
+                position=request.position,
+                background_color=request.background_color,
+            )
+            ass_path = os.path.join(tmpdir, "captions.ass")
+            with open(ass_path, "w", encoding="utf-8") as f:
+                f.write(ass_content)
+
+            logger.info(f"[BurnCaptions] ASS file written: {len(entries)} dialogue lines, {vid_w}x{vid_h}")
+
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", video_path,
+                "-vf", f"ass={ass_path}:fontsdir={_FONTS_DIR}",
+                "-c:v", "libx264",
+                "-preset", "ultrafast",
+                "-crf", "23",
+                "-c:a", "copy",
+                "-movflags", "+faststart",
+                output_path,
+            ]
+
+            logger.info(f"[BurnCaptions] Running FFmpeg with ASS subtitles")
+            result = await run_ffmpeg_async(cmd, timeout=180)
+
+            if result.returncode != 0:
+                error_msg = get_ffmpeg_error(result.stderr)
+                logger.error(f"FFmpeg burn-captions failed: {result.stderr}")
+                raise HTTPException(status_code=500, detail=f"Failed to burn captions: {error_msg}")
+
+            with open(output_path, "rb") as f:
+                output_bytes = f.read()
+
+            output_base64 = base64.b64encode(output_bytes).decode("utf-8")
+            logger.info(f"Burn captions complete: {len(output_bytes)} bytes")
+
+            return BurnCaptionsResponse(video_base64=output_base64, mime_type="video/mp4")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Burn captions failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Burn captions failed: {str(e)}")

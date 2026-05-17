@@ -1,6 +1,7 @@
 import { logger } from "@/lib/logger";
 import { memo, useEffect, useState, useCallback } from "react";
-import { Handle, Position, NodeProps, useReactFlow, useStore } from "reactflow";
+import { Position, NodeProps, useReactFlow, useStore } from "reactflow";
+import { ConnectedHandle } from './ConnectedHandle';
 import {
   TextIteratorNodeData,
   NODE_CONFIGURATIONS,
@@ -201,7 +202,7 @@ function TextIteratorNode({ data, id }: NodeProps<TextIteratorNodeData>) {
       <div className="absolute right-0 top-0 h-full flex flex-col justify-evenly py-4">
         {Array.from({ length: count }, (_, i) => (
           <div key={`output_${i}`} className="relative flex items-center">
-            <Handle
+            <ConnectedHandle
               type="source"
               position={Position.Right}
               id={`output_${i}`}
@@ -247,7 +248,7 @@ function TextIteratorNode({ data, id }: NodeProps<TextIteratorNodeData>) {
               key={input.id}
               className="flex items-center gap-2 relative h-6"
             >
-              <Handle
+              <ConnectedHandle
                 type="target"
                 position={Position.Left}
                 id={input.id}

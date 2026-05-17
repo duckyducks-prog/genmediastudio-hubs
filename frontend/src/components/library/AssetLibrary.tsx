@@ -5,15 +5,9 @@ import {
   forwardRef,
   useCallback,
 } from "react";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
+import { SidePanel } from "@/components/ui/SidePanel";
+import { TabPill } from "@/components/ui/TabPill";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -25,14 +19,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   Download,
+  Search,
   Trash2,
   Image as ImageIcon,
   Video as VideoIcon,
@@ -44,14 +32,14 @@ import {
   Copy,
   CheckCircle2,
   Circle,
+  Workflow as WorkflowIcon,
+  FolderPlus,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { auth } from "@/lib/firebase";
 import { API_ENDPOINTS } from "@/lib/api-config";
 import { logger } from "@/lib/logger";
-import { Input } from "@/components/ui/input";
 import { useFolders } from "@/hooks/useFolders";
-import { FolderSidebar } from "./FolderSidebar";
 
 interface Asset {
   id: string;
@@ -88,16 +76,20 @@ const AssetLibrary = forwardRef<AssetLibraryRef, AssetLibraryProps>(
     const [isSelectMode, setIsSelectMode] = useState(false);
     const [selectedAssetIds, setSelectedAssetIds] = useState<Set<string>>(new Set());
     const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
+    const [folderSelectMode, setFolderSelectMode] = useState(false);
+    const [selectedFolderIds, setSelectedFolderIds] = useState<Set<string>>(new Set());
+    const [showMovePicker, setShowMovePicker] = useState(false);
     const [deletingFolderWithContentsId, setDeletingFolderWithContentsId] = useState<string | null>(null);
     const [creatingFolderForAsset, setCreatingFolderForAsset] = useState<string | null>(null);
     const [newFolderName, setNewFolderName] = useState("");
+    const [searchQuery, setSearchQuery] = useState("");
     const { toast } = useToast();
 
     const {
       folders,
       fetchFolders,
       createFolder,
-      renameFolder,
+      renameFolder: _renameFolder,
       deleteFolder,
       deleteFolderWithContents,
       moveAssetToFolder,
@@ -272,7 +264,7 @@ const AssetLibrary = forwardRef<AssetLibraryRef, AssetLibraryProps>(
     };
 
     // Download folder as zip
-    const handleDownloadFolderZip = async () => {
+    const _handleDownloadFolderZip = async () => {
       if (selectedFolderId === "all" || isDownloadingZip) return;
       setIsDownloadingZip(true);
       try {
@@ -342,7 +334,7 @@ const AssetLibrary = forwardRef<AssetLibraryRef, AssetLibraryProps>(
     };
 
     // Download a folder by id (used from sidebar)
-    const handleDownloadFolderById = async (folderId: string) => {
+    const _handleDownloadFolderById = async (folderId: string) => {
       try {
         const user = auth.currentUser;
         const token = await user?.getIdToken();
@@ -370,12 +362,12 @@ const AssetLibrary = forwardRef<AssetLibraryRef, AssetLibraryProps>(
     };
 
     // Multi-select
-    const toggleSelectMode = () => {
+    const _toggleSelectMode = () => {
       setIsSelectMode((prev) => !prev);
       setSelectedAssetIds(new Set());
     };
 
-    const toggleAssetSelection = (assetId: string) => {
+    const _toggleAssetSelection = (assetId: string) => {
       setSelectedAssetIds((prev) => {
         const next = new Set(prev);
         if (next.has(assetId)) next.delete(assetId);
@@ -406,7 +398,7 @@ const AssetLibrary = forwardRef<AssetLibraryRef, AssetLibraryProps>(
       }
     };
 
-    const handleBulkDownload = async () => {
+    const _handleBulkDownload = async () => {
       const selected = filteredAssets.filter((a) => selectedAssetIds.has(a.id));
       for (const asset of selected) {
         await handleDownload(asset);
@@ -414,7 +406,7 @@ const AssetLibrary = forwardRef<AssetLibraryRef, AssetLibraryProps>(
       }
     };
 
-    const handleBulkMove = async (folderId: string | null) => {
+    const _handleBulkMove = async (folderId: string | null) => {
       const ids = Array.from(selectedAssetIds);
       try {
         await Promise.all(ids.map((id) => handleMoveAsset(id, folderId)));
@@ -467,464 +459,389 @@ const AssetLibrary = forwardRef<AssetLibraryRef, AssetLibraryProps>(
       });
     };
 
+    // Keep unused-but-preserved backend logic accessible for future use
+    void [sortOrder, setSortOrder, isSelectMode, setIsSelectMode, _renameFolder,
+          _handleDownloadFolderZip, _handleDownloadFolderById, _toggleSelectMode,
+          _toggleAssetSelection, _handleBulkDownload, _handleBulkMove];
+
     return (
       <>
-        <Sheet open={open} onOpenChange={onOpenChange}>
-          <SheetContent
-            side="right"
-            className="w-full sm:max-w-3xl overflow-y-auto"
-          >
-            <SheetHeader>
-              <SheetTitle>Asset Library</SheetTitle>
-              <SheetDescription>
-                View, download, and manage your generated images and videos
-              </SheetDescription>
-            </SheetHeader>
+        <SidePanel isOpen={open} onClose={() => onOpenChange(false)} title="Assets" width={580}>
+          {/* Two-column body */}
+          <div style={{ display: "flex", gap: 14, flex: 1, minHeight: 0 }}>
 
-            <div className="flex mt-4 gap-4 h-[calc(100%-5rem)]">
-              {/* Folder Sidebar */}
-              <FolderSidebar
-                folders={folders}
-                selectedFolderId={selectedFolderId}
-                onSelectFolder={setSelectedFolderId}
-                onCreateFolder={async (name) => {
-                  try {
-                    await createFolder(name);
-                    toast({ title: `Folder "${name}" created` });
-                  } catch (error) {
-                    toast({
-                      title: "Failed to create folder",
-                      description: error instanceof Error ? error.message : "Unknown error",
-                      variant: "destructive",
-                    });
-                  }
-                }}
-                onRenameFolder={async (id, name) => {
-                  try {
-                    await renameFolder(id, name);
-                  } catch (error) {
-                    toast({
-                      title: "Failed to rename folder",
-                      description: error instanceof Error ? error.message : "Unknown error",
-                      variant: "destructive",
-                    });
-                  }
-                }}
-                onDeleteFolder={(id) => setDeletingFolderId(id)}
-                onDownloadFolder={handleDownloadFolderById}
-                onDeleteFolderWithContents={(id) => setDeletingFolderWithContentsId(id)}
-                onDropAsset={(assetId, folderId) => handleMoveAsset(assetId, folderId)}
-              />
+            {/* LEFT: Folder sidebar — 180px */}
+            <div style={{ width: 180, flexShrink: 0, display: "flex", flexDirection: "column", gap: 2, overflowY: "auto" }}>
+              {/* All assets row */}
+              <button
+                className={`al-folder-row${selectedFolderId === "all" ? " active" : ""}`}
+                onClick={() => setSelectedFolderId("all")}
+              >
+                <span className="al-folder-icon">
+                  <Archive className="w-3 h-3" />
+                </span>
+                <span className="al-folder-name">All assets</span>
+                <span className="al-folder-count">{assets.length}</span>
+              </button>
 
-              {/* Main content */}
-              <div className="flex-1 overflow-y-auto flex flex-col min-w-0">
-                {/* Toolbar */}
-                <div className="flex gap-2 mb-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => fetchAssets()}
-                    disabled={isLoading}
-                    className="flex-1"
-                  >
-                    <RefreshCw
-                      className={`w-4 h-4 mr-2 ${isLoading ? "animate-spin" : ""}`}
-                    />
-                    Refresh
-                  </Button>
-                  <Select
-                    value={sortOrder}
-                    onValueChange={(v) => setSortOrder(v as "newest" | "oldest")}
-                  >
-                    <SelectTrigger className="h-9 w-28 text-xs">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="newest">Newest</SelectItem>
-                      <SelectItem value="oldest">Oldest</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Button
-                    variant={isSelectMode ? "default" : "outline"}
-                    size="sm"
-                    onClick={toggleSelectMode}
-                  >
-                    {isSelectMode ? "Cancel" : "Select"}
-                  </Button>
-                  {selectedFolderId !== "all" && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleDownloadFolderZip}
-                      disabled={isDownloadingZip || filteredAssets.length === 0}
-                      title="Download folder as zip"
+              <div className="al-folder-divider" />
+
+              {/* Folders header — inline + button + select toggle */}
+              <div className="al-folders-header">
+                <p className="al-folder-section-label" style={{ padding: 0, flex: 1 }}>Folders</p>
+                <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                  {folders.length > 0 && (
+                    <button
+                      onClick={() => { setFolderSelectMode(v => !v); setSelectedFolderIds(new Set()); }}
+                      style={{ fontSize: 9, background: "none", border: "none", cursor: "pointer", color: folderSelectMode ? "hsl(var(--primary))" : "hsl(var(--muted-foreground))", fontFamily: "inherit", padding: "1px 4px" }}
                     >
-                      {isDownloadingZip ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <Archive className="w-4 h-4" />
-                      )}
-                    </Button>
+                      {folderSelectMode ? "Done" : "Select"}
+                    </button>
+                  )}
+                  <button
+                    className="al-new-folder-inline"
+                    aria-label="New folder"
+                    onClick={() => setCreatingFolderForAsset("__new__")}
+                  >
+                    <Plus className="w-3 h-3" />
+                    <span className="al-tooltip">New folder</span>
+                  </button>
+                </div>
+              </div>
+
+              {folders.map((folder) => {
+                const isChecked = selectedFolderIds.has(folder.id);
+                return (
+                  <div key={folder.id}
+                    className={`al-folder-row${!folderSelectMode && selectedFolderId === folder.id ? " active" : ""}${folderSelectMode && isChecked ? " active" : ""}`}
+                    style={{ position: "relative" }}
+                    onClick={() => {
+                      if (folderSelectMode) {
+                        setSelectedFolderIds(prev => {
+                          const next = new Set(prev);
+                          next.has(folder.id) ? next.delete(folder.id) : next.add(folder.id);
+                          return next;
+                        });
+                      } else {
+                        setSelectedFolderId(folder.id);
+                      }
+                    }}
+                  >
+                    {folderSelectMode ? (
+                      <span className="al-folder-icon" style={{ color: isChecked ? "hsl(var(--primary))" : "hsl(var(--muted-foreground))" }}>
+                        {isChecked ? <CheckCircle2 className="w-3 h-3" /> : <Circle className="w-3 h-3" />}
+                      </span>
+                    ) : (
+                      <span className="al-folder-icon"><Archive className="w-3 h-3" /></span>
+                    )}
+                    <span className="al-folder-name">{folder.name}</span>
+                    {!folderSelectMode && (
+                      <>
+                        <span className="al-folder-count al-count-hide">{folder.asset_count ?? ""}</span>
+                        <button className="al-folder-overflow" onClick={(e) => { e.stopPropagation(); setDeletingFolderId(folder.id); }} title="Delete folder">
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+
+              {/* Bulk folder actions */}
+              {folderSelectMode && selectedFolderIds.size > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: "8px 4px 4px", borderTop: "1px solid rgba(185,205,190,0.08)", marginTop: 4 }}>
+                  <p style={{ fontSize: 10, color: "hsl(var(--muted-foreground))", margin: 0, paddingLeft: 4 }}>{selectedFolderIds.size} selected</p>
+                  <button className="al-folder-row" style={{ color: "hsl(var(--primary))" }}
+                    onClick={async () => {
+                      for (const id of selectedFolderIds) await _handleDownloadFolderById(id);
+                      setSelectedFolderIds(new Set()); setFolderSelectMode(false);
+                    }}>
+                    <Download className="w-3 h-3" /><span className="al-folder-name">Download all</span>
+                  </button>
+                  <button className="al-folder-row" style={{ color: "#FF4800" }}
+                    onClick={() => { for (const id of selectedFolderIds) setDeletingFolderId(id); setSelectedFolderIds(new Set()); setFolderSelectMode(false); }}>
+                    <Trash2 className="w-3 h-3" /><span className="al-folder-name">Delete selected</span>
+                  </button>
+                  {onAddAssetNode && (
+                    <button className="al-folder-row" style={{ color: "hsl(var(--primary))" }}
+                      onClick={() => {
+                        assets.filter(a => selectedFolderIds.has(a.folder_id ?? "")).forEach(a => onAddAssetNode(a));
+                        setSelectedFolderIds(new Set()); setFolderSelectMode(false);
+                        onOpenChange(false);
+                      }}>
+                      <Plus className="w-3 h-3" /><span className="al-folder-name">Add to workflow</span>
+                    </button>
                   )}
                 </div>
+              )}
 
-                {/* Bulk action bar */}
-                {isSelectMode && (
-                  <div className="flex items-center gap-2 mb-3 p-2 bg-muted rounded-md flex-wrap">
-                    <span className="text-xs text-muted-foreground shrink-0">
-                      {selectedAssetIds.size} selected
-                    </span>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 text-xs px-2"
-                      onClick={() => setSelectedAssetIds(new Set(filteredAssets.map((a) => a.id)))}
-                    >
-                      All
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 text-xs px-2"
-                      onClick={() => setSelectedAssetIds(new Set())}
-                      disabled={selectedAssetIds.size === 0}
-                    >
-                      None
-                    </Button>
-                    <div className="flex gap-1 ml-auto">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-7 text-xs"
-                        disabled={selectedAssetIds.size === 0}
-                        onClick={handleBulkDownload}
-                      >
-                        <Download className="w-3 h-3 mr-1" />
-                        Download
-                      </Button>
-                      <Select
-                        value=""
-                        onValueChange={(val) => handleBulkMove(val === "__remove__" ? null : val)}
-                        disabled={selectedAssetIds.size === 0}
-                      >
-                        <SelectTrigger className="h-7 w-28 text-xs">
-                          <SelectValue placeholder="Move to…" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__remove__">Uncategorized</SelectItem>
-                          {folders.map((f) => (
-                            <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <Button
-                        size="sm"
-                        variant="destructive"
-                        className="h-7 text-xs"
-                        disabled={selectedAssetIds.size === 0}
-                        onClick={() => setBulkDeleteConfirm(true)}
-                      >
-                        <Trash2 className="w-3 h-3 mr-1" />
-                        Delete
-                      </Button>
-                    </div>
-                  </div>
+              {/* Inline new-folder input — appears below folder list */}
+              {creatingFolderForAsset === "__new__" && (
+                <div className="al-new-folder-input">
+                  <input
+                    autoFocus
+                    value={newFolderName}
+                    onChange={e => setNewFolderName(e.target.value)}
+                    placeholder="Folder name…"
+                    className="al-folder-name-input"
+                    onKeyDown={async e => {
+                      if (e.key === "Enter" && newFolderName.trim()) {
+                        try {
+                          await createFolder(newFolderName.trim());
+                          toast({ title: `Folder "${newFolderName.trim()}" created` });
+                          setNewFolderName("");
+                          setCreatingFolderForAsset(null);
+                        } catch (err) {
+                          toast({ title: "Failed to create folder", variant: "destructive" });
+                        }
+                      }
+                      if (e.key === "Escape") { setNewFolderName(""); setCreatingFolderForAsset(null); }
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* RIGHT: Content area */}
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 10, minWidth: 0, position: "relative" }} className={isSelectMode ? "al-select-mode" : ""}>
+              {/* Search */}
+              <div className="panel-search-wrap">
+                <Search className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                <input
+                  placeholder="Search assets…"
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                />
+                {isLoading && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground flex-shrink-0" />}
+                {!isLoading && (
+                  <button onClick={() => fetchAssets()} title="Refresh" style={{ background: "none", border: "none", cursor: "pointer", display: "flex", color: "hsl(var(--muted-foreground))" }}>
+                    <RefreshCw className="w-3 h-3" />
+                  </button>
                 )}
+              </div>
 
-                {/* Filters */}
-                <Tabs
+              {/* Tab pill */}
+              <div>
+                <TabPill
+                  options={[
+                    { value: "all" as const, label: "All" },
+                    { value: "image" as const, label: "Images", icon: <ImageIcon className="w-3 h-3" /> },
+                    { value: "video" as const, label: "Videos", icon: <VideoIcon className="w-3 h-3" /> },
+                  ]}
                   value={filter}
-                  onValueChange={(v) => setFilter(v as any)}
-                >
-                  <TabsList className="grid w-full grid-cols-3">
-                    <TabsTrigger value="all">All</TabsTrigger>
-                    <TabsTrigger value="image">Images</TabsTrigger>
-                    <TabsTrigger value="video">Videos</TabsTrigger>
-                  </TabsList>
+                  onChange={setFilter}
+                  ariaLabel="Asset type filter"
+                />
+              </div>
 
-                  <TabsContent value={filter} className="mt-6">
-                    {isLoading ? (
-                      <div className="flex items-center justify-center h-64">
-                        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-                      </div>
-                    ) : filteredAssets.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center h-64 text-muted-foreground">
-                        <p className="text-lg font-medium mb-2">No assets yet</p>
-                        <p className="text-sm">
-                          {filter === "all"
-                            ? "Generate images or videos and save them to your library"
-                            : `Generate ${filter}s and save them to your library`}
-                        </p>
-                      </div>
-                    ) : (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {filteredAssets.map((asset) => (
-                          <div
-                            key={asset.id}
-                            className={`bg-card border rounded-lg overflow-hidden hover:shadow-lg transition-shadow ${
-                              isSelectMode && selectedAssetIds.has(asset.id)
-                                ? "border-primary ring-2 ring-primary"
-                                : "border-border"
-                            }`}
-                          >
-                            {/* Thumbnail */}
-                            <div
-                              className={`relative aspect-video bg-muted ${isSelectMode ? "cursor-pointer" : "cursor-grab active:cursor-grabbing"}`}
-                              draggable={!isSelectMode}
-                              onDragStart={(e) => !isSelectMode && handleAssetDragStart(e, asset)}
-                              onClick={() => isSelectMode ? toggleAssetSelection(asset.id) : setPreviewAsset(asset)}
-                            >
-                              {asset.asset_type === "image" ? (
-                                <img
-                                  src={asset.url}
-                                  alt={asset.prompt}
-                                  className="w-full h-full object-cover"
-                                  onError={(e) => {
-                                    console.error(
-                                      "[AssetLibrary] Image failed to load:",
-                                      asset.url,
-                                    );
-                                    e.currentTarget.src =
-                                      'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="100" height="100"%3E%3Crect fill="%23ddd" width="100" height="100"/%3E%3Ctext x="50" y="50" text-anchor="middle" fill="%23999" font-family="monospace" font-size="12"%3EError%3C/text%3E%3C/svg%3E';
-                                  }}
-                                />
-                              ) : (
-                                <video
-                                  src={asset.url}
-                                  className="w-full h-full object-cover"
-                                  onError={() => {
-                                    console.error(
-                                      "[AssetLibrary] Video failed to load:",
-                                      asset.url,
-                                    );
-                                  }}
-                                />
-                              )}
-                              {/* Type Badge */}
-                              <div className="absolute top-2 right-2 bg-background/80 backdrop-blur-sm rounded-full p-1.5">
-                                {asset.asset_type === "image" ? (
-                                  <ImageIcon className="w-4 h-4" />
-                                ) : (
-                                  <VideoIcon className="w-4 h-4" />
-                                )}
-                              </div>
-                              {/* Select checkbox */}
-                              {isSelectMode && (
-                                <div className="absolute top-2 left-2">
-                                  {selectedAssetIds.has(asset.id) ? (
-                                    <CheckCircle2 className="w-5 h-5 text-primary drop-shadow" />
-                                  ) : (
-                                    <Circle className="w-5 h-5 text-white drop-shadow" />
-                                  )}
-                                </div>
-                              )}
-                            </div>
+              {/* Asset grid */}
+              <div className="al-grid-scroll">
+                {filteredAssets.length === 0 && !isLoading ? (
+                  <div className="panel-empty">
+                    <p className="text-sm text-muted-foreground">
+                      {searchQuery ? "No assets match your search" : "No assets yet"}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="al-asset-grid">
+                    {filteredAssets.map((asset) => (
+                      <div
+                        key={asset.id}
+                        className={`al-asset-card${selectedAssetIds.has(asset.id) ? " al-selected" : ""}`}
+                        draggable={!isSelectMode}
+                        onDragStart={(e) => !isSelectMode && handleAssetDragStart(e, asset)}
+                        onClick={() => {
+                          if (isSelectMode) {
+                            setSelectedAssetIds(prev => { const n = new Set(prev); n.has(asset.id) ? n.delete(asset.id) : n.add(asset.id); if (n.size === 0) setIsSelectMode(false); return n; });
+                          } else {
+                            setPreviewAsset(asset);
+                          }
+                        }}
+                      >
+                        {/* Selection checkbox */}
+                        <div
+                          className="al-asset-checkbox"
+                          role="checkbox"
+                          aria-checked={selectedAssetIds.has(asset.id)}
+                          aria-label="Select asset"
+                          tabIndex={0}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setIsSelectMode(true);
+                            setSelectedAssetIds(prev => { const n = new Set(prev); n.has(asset.id) ? n.delete(asset.id) : n.add(asset.id); if (n.size === 0) setIsSelectMode(false); return n; });
+                          }}
+                        >
+                          <CheckCircle2 className="w-3 h-3" />
+                        </div>
+                        {/* Thumbnail */}
+                        <div className="al-asset-thumb">
+                          {asset.asset_type === "image" ? (
+                            <img
+                              src={asset.url}
+                              alt={asset.prompt}
+                              style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                              onError={(e) => { e.currentTarget.style.display = "none"; }}
+                            />
+                          ) : (
+                            <video
+                              src={asset.url}
+                              style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                            />
+                          )}
+                          <div className="al-type-badge">
+                            {asset.asset_type === "image"
+                              ? <ImageIcon className="w-2.5 h-2.5" />
+                              : <VideoIcon className="w-2.5 h-2.5" />}
+                          </div>
+                        </div>
 
-                            {/* Info */}
-                            <div className="p-3 space-y-2">
-                              <div className="flex items-start gap-1">
-                                <p className="text-sm font-medium line-clamp-2 flex-1">
-                                  {asset.prompt || "No prompt"}
-                                </p>
-                                {asset.prompt && (
-                                  <Button
-                                    size="icon"
-                                    variant="ghost"
-                                    className="h-5 w-5 shrink-0 mt-0.5"
-                                    onClick={() => handleCopyPrompt(asset.prompt)}
-                                    title="Copy prompt"
-                                  >
-                                    <Copy className="w-3 h-3" />
-                                  </Button>
-                                )}
-                              </div>
-                              <p className="text-xs text-muted-foreground">
-                                {formatDate(asset.created_at)}
-                              </p>
-
-                              {/* Actions */}
-                              <div className="flex gap-2">
-                                {onAddAssetNode && (
-                                  <Button
-                                    size="sm"
-                                    variant="default"
-                                    onClick={() => {
-                                      onAddAssetNode(asset);
-                                      toast({
-                                        title: "Added to workflow",
-                                        description:
-                                          "Asset node created on the canvas",
-                                      });
-                                    }}
-                                    className="flex-1"
-                                  >
-                                    Add to Workflow
-                                  </Button>
-                                )}
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => handleDownload(asset)}
-                                  className={onAddAssetNode ? "" : "flex-1"}
+                        {/* Metadata */}
+                        <div className="al-asset-meta">
+                          <div className="al-asset-title-row">
+                            <p className="al-asset-title">{asset.prompt || "Untitled"}</p>
+                            <div className="al-asset-actions">
+                              {onAddAssetNode && (
+                                <button
+                                  className="al-action-btn"
+                                  title="Add to workflow"
+                                  onClick={(e) => { e.stopPropagation(); onAddAssetNode(asset); onOpenChange(false); }}
                                 >
-                                  <Download className="w-3 h-3 mr-1" />
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="destructive"
-                                  onClick={() => setDeleteId(asset.id)}
-                                >
-                                  <Trash2 className="w-3 h-3" />
-                                </Button>
-                              </div>
-
-                              {/* Folder selector */}
-                              {creatingFolderForAsset === asset.id ? (
-                                <div className="flex items-center gap-1">
-                                  <Input
-                                    value={newFolderName}
-                                    onChange={(e) => setNewFolderName(e.target.value)}
-                                    placeholder="Folder name"
-                                    className="h-7 text-xs flex-1"
-                                    autoFocus
-                                    onKeyDown={async (e) => {
-                                      if (e.key === "Enter" && newFolderName.trim()) {
-                                        try {
-                                          const folder = await createFolder(newFolderName.trim());
-                                          await handleMoveAsset(asset.id, folder.id);
-                                        } catch (err) {
-                                          toast({ title: "Failed to create folder", variant: "destructive" });
-                                        }
-                                        setNewFolderName("");
-                                        setCreatingFolderForAsset(null);
-                                      }
-                                      if (e.key === "Escape") {
-                                        setNewFolderName("");
-                                        setCreatingFolderForAsset(null);
-                                      }
-                                    }}
-                                  />
-                                  <Button
-                                    size="sm"
-                                    className="h-7 text-xs px-2"
-                                    disabled={!newFolderName.trim()}
-                                    onClick={async () => {
-                                      if (!newFolderName.trim()) return;
-                                      try {
-                                        const folder = await createFolder(newFolderName.trim());
-                                        await handleMoveAsset(asset.id, folder.id);
-                                      } catch (err) {
-                                        toast({ title: "Failed to create folder", variant: "destructive" });
-                                      }
-                                      setNewFolderName("");
-                                      setCreatingFolderForAsset(null);
-                                    }}
-                                  >
-                                    <Plus className="w-3 h-3" />
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    className="h-7 text-xs px-2"
-                                    onClick={() => {
-                                      setNewFolderName("");
-                                      setCreatingFolderForAsset(null);
-                                    }}
-                                  >
-                                    <X className="w-3 h-3" />
-                                  </Button>
-                                </div>
-                              ) : (
-                                <Select
-                                  value={asset.folder_id ?? "__unset__"}
-                                  onValueChange={(val) => {
-                                    if (val === "__create__") {
-                                      setCreatingFolderForAsset(asset.id);
-                                      return;
-                                    }
-                                    handleMoveAsset(asset.id, val === "__remove__" ? null : val);
-                                  }}
-                                >
-                                  <SelectTrigger className="h-7 text-xs">
-                                    <SelectValue placeholder="Add to folder…" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {asset.folder_id && (
-                                      <SelectItem value="__remove__">
-                                        Remove from folder
-                                      </SelectItem>
-                                    )}
-                                    {folders.map((f) => (
-                                      <SelectItem key={f.id} value={f.id}>
-                                        {f.name}
-                                      </SelectItem>
-                                    ))}
-                                    <SelectItem value="__create__">
-                                      <span className="flex items-center gap-1">
-                                        <Plus className="w-3 h-3" />
-                                        Create Folder
-                                      </span>
-                                    </SelectItem>
-                                  </SelectContent>
-                                </Select>
+                                  <WorkflowIcon className="w-2.5 h-2.5" />
+                                </button>
                               )}
+                              <button
+                                className="al-action-btn"
+                                title="Download"
+                                onClick={(e) => { e.stopPropagation(); handleDownload(asset); }}
+                              >
+                                <Download className="w-2.5 h-2.5" />
+                              </button>
+                              <button
+                                className="al-action-btn"
+                                title="Copy prompt"
+                                onClick={(e) => { e.stopPropagation(); handleCopyPrompt(asset.prompt); }}
+                              >
+                                <Copy className="w-2.5 h-2.5" />
+                              </button>
+                              <button
+                                className="al-action-btn al-action-danger"
+                                title="Delete"
+                                onClick={(e) => { e.stopPropagation(); setDeleteId(asset.id); }}
+                              >
+                                <Trash2 className="w-2.5 h-2.5" />
+                              </button>
                             </div>
                           </div>
-                        ))}
+                          <p className="al-asset-date">{formatDate(asset.created_at)}</p>
+                        </div>
                       </div>
-                    )}
-                  </TabsContent>
-                </Tabs>
+                    ))}
+                  </div>
+                )}
               </div>
-            </div>
-          </SheetContent>
-        </Sheet>
 
-        {/* Delete Asset Confirmation */}
+              {/* Floating bulk action bar */}
+              {isSelectMode && selectedAssetIds.size > 0 && (
+                <div className="al-bulk-bar">
+                  <span className="al-bulk-count">
+                    <span className="al-bulk-count-num">{selectedAssetIds.size}</span> selected
+                  </span>
+                  {/* Move to folder */}
+                  <div style={{ position: "relative" }}>
+                    <button className="al-bulk-action" aria-label="Move to folder"
+                      onClick={() => setShowMovePicker(v => !v)}>
+                      <FolderPlus className="w-3.5 h-3.5" />
+                      <span className="al-tooltip">Move to folder</span>
+                    </button>
+                    {showMovePicker && (
+                      <>
+                        <div className="fixed inset-0 z-10" onClick={() => setShowMovePicker(false)} />
+                        <div style={{
+                          position: "absolute", bottom: "calc(100% + 8px)", left: "50%", transform: "translateX(-50%)",
+                          background: "hsl(var(--card))", borderRadius: 10, padding: 6, zIndex: 20, minWidth: 160,
+                          boxShadow: "-3px -3px 8px rgba(30,100,105,0.35), 3px 3px 10px rgba(0,0,0,0.7), 0 0 0 1px rgba(185,205,190,0.06)"
+                        }}>
+                          <p style={{ fontSize: 9, color: "hsl(var(--muted-foreground))", textTransform: "uppercase", letterSpacing: "0.1em", padding: "4px 6px 6px", margin: 0 }}>Move to folder</p>
+                          {folders.map(f => (
+                            <button key={f.id}
+                              style={{ display: "flex", alignItems: "center", gap: 7, width: "100%", padding: "6px 8px", background: "none", border: "none", cursor: "pointer", borderRadius: 6, fontFamily: "inherit", fontSize: 12, color: "hsl(var(--foreground))", textAlign: "left" }}
+                              onMouseEnter={e => (e.currentTarget.style.background = "rgba(185,205,190,0.08)")}
+                              onMouseLeave={e => (e.currentTarget.style.background = "none")}
+                              onClick={async () => {
+                                await _handleBulkMove(f.id);
+                                setShowMovePicker(false); setIsSelectMode(false); setSelectedAssetIds(new Set());
+                                toast({ title: `Moved ${selectedAssetIds.size} asset${selectedAssetIds.size !== 1 ? "s" : ""} to "${f.name}"` });
+                              }}>
+                              <Archive className="w-3 h-3 flex-shrink-0" style={{ color: "hsl(var(--primary))" }} />
+                              {f.name}
+                            </button>
+                          ))}
+                          {folders.length === 0 && (
+                            <p style={{ fontSize: 11, color: "hsl(var(--muted-foreground))", padding: "6px 8px", margin: 0 }}>No folders yet</p>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                  <div className="al-bulk-divider" />
+                  {onAddAssetNode && (
+                    <button className="al-bulk-action" aria-label="Add to workflow"
+                      onClick={() => {
+                        filteredAssets.filter(a => selectedAssetIds.has(a.id)).forEach(a => onAddAssetNode(a));
+                        setIsSelectMode(false); setSelectedAssetIds(new Set()); onOpenChange(false);
+                      }}>
+                      <WorkflowIcon className="w-3.5 h-3.5" />
+                      <span className="al-tooltip">Add to workflow</span>
+                    </button>
+                  )}
+                  <button className="al-bulk-action" aria-label="Download"
+                    onClick={() => {
+                      filteredAssets.filter(a => selectedAssetIds.has(a.id)).forEach(a => handleDownload(a));
+                      setIsSelectMode(false); setSelectedAssetIds(new Set());
+                    }}>
+                    <Download className="w-3.5 h-3.5" />
+                    <span className="al-tooltip">Download</span>
+                  </button>
+                  <div className="al-bulk-divider" />
+                  <button className="al-bulk-action danger" aria-label="Delete"
+                    onClick={() => setBulkDeleteConfirm(true)}>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span className="al-tooltip">Delete</span>
+                  </button>
+                  <button className="al-bulk-done"
+                    onClick={() => { setIsSelectMode(false); setSelectedAssetIds(new Set()); }}>
+                    Done
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </SidePanel>
+
+        {/* Delete Asset Dialog */}
         <AlertDialog open={!!deleteId} onOpenChange={() => setDeleteId(null)}>
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>Delete Asset?</AlertDialogTitle>
-              <AlertDialogDescription>
-                This action cannot be undone. This will permanently delete the
-                asset from your library.
-              </AlertDialogDescription>
+              <AlertDialogDescription>This action cannot be undone. The asset will be permanently deleted.</AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                onClick={() => deleteId && handleDelete(deleteId)}
-                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              >
-                Delete
-              </AlertDialogAction>
+              <AlertDialogAction onClick={() => deleteId && handleDelete(deleteId)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete</AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
 
-        {/* Delete Folder Confirmation */}
-        <AlertDialog
-          open={!!deletingFolderId}
-          onOpenChange={() => setDeletingFolderId(null)}
-        >
+        {/* Delete Folder Dialog */}
+        <AlertDialog open={!!deletingFolderId} onOpenChange={() => setDeletingFolderId(null)}>
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>Delete Folder?</AlertDialogTitle>
-              <AlertDialogDescription>
-                All assets in this folder will be moved to Uncategorized. The
-                assets themselves will not be deleted.
-              </AlertDialogDescription>
+              <AlertDialogDescription>Assets in this folder will be moved to Uncategorized.</AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                onClick={() =>
-                  deletingFolderId && handleDeleteFolder(deletingFolderId)
-                }
-                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              >
-                Delete Folder
-              </AlertDialogAction>
+              <AlertDialogAction onClick={() => deletingFolderId && handleDeleteFolder(deletingFolderId)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete Folder</AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
@@ -976,70 +893,26 @@ const AssetLibrary = forwardRef<AssetLibraryRef, AssetLibraryProps>(
         </AlertDialog>
 
         {/* Preview Dialog */}
-        <AlertDialog
-          open={!!previewAsset}
-          onOpenChange={() => setPreviewAsset(null)}
-        >
+        <AlertDialog open={!!previewAsset} onOpenChange={() => setPreviewAsset(null)}>
           <AlertDialogContent className="max-w-4xl">
             <AlertDialogHeader>
               <AlertDialogTitle className="flex items-center justify-between">
-                <span className="line-clamp-1">
-                  {previewAsset?.prompt || "Preview"}
-                </span>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => setPreviewAsset(null)}
-                >
-                  <X className="w-4 h-4" />
-                </Button>
+                <span className="line-clamp-1">{previewAsset?.prompt || "Preview"}</span>
+                <Button variant="ghost" size="icon" onClick={() => setPreviewAsset(null)}><X className="w-4 h-4" /></Button>
               </AlertDialogTitle>
             </AlertDialogHeader>
             <div className="max-h-[70vh] overflow-auto">
               {previewAsset?.asset_type === "image" ? (
-                <img
-                  src={previewAsset.url}
-                  alt={previewAsset.prompt}
-                  className="w-full h-auto"
-                  onError={() => {
-                    console.error(
-                      "[AssetLibrary] Preview image failed to load:",
-                      previewAsset.url,
-                    );
-                  }}
-                />
+                <img src={previewAsset.url} alt={previewAsset.prompt} className="w-full h-auto" />
               ) : (
-                <video
-                  src={previewAsset?.url}
-                  controls
-                  className="w-full h-auto"
-                  onError={() => {
-                    console.error(
-                      "[AssetLibrary] Preview video failed to load:",
-                      previewAsset?.url,
-                    );
-                  }}
-                />
+                <video src={previewAsset?.url} controls className="w-full h-auto" />
               )}
             </div>
             <AlertDialogFooter>
-              {previewAsset?.prompt && (
-                <Button
-                  variant="outline"
-                  onClick={() => handleCopyPrompt(previewAsset.prompt)}
-                >
-                  <Copy className="w-4 h-4 mr-2" />
-                  Copy Prompt
-                </Button>
-              )}
-              <Button
-                variant="outline"
-                onClick={() => previewAsset && handleDownload(previewAsset)}
-              >
-                <Download className="w-4 h-4 mr-2" />
-                Download
-              </Button>
               <AlertDialogCancel>Close</AlertDialogCancel>
+              {onAddAssetNode && previewAsset && (
+                <AlertDialogAction onClick={() => { onAddAssetNode(previewAsset); setPreviewAsset(null); }}>Use in workflow</AlertDialogAction>
+              )}
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>

@@ -1,6 +1,7 @@
 import { logger } from "@/lib/logger";
 import { memo, useState, useEffect } from "react";
-import { Handle, Position, NodeProps, useEdges, useNodes } from "reactflow";
+import { Position, NodeProps, useEdges, useNodes } from "reactflow";
+import { ConnectedHandle } from './ConnectedHandle';
 import { DownloadNodeData } from "../types";
 import { Download, Loader2, AlertCircle } from "lucide-react";
 import { createMediaZip, downloadBlob } from "@/lib/zip-utils";
@@ -273,7 +274,7 @@ function DownloadNode({ data, id }: NodeProps<DownloadNodeData>) {
       </div>
 
       {/* Input Handle */}
-      <Handle
+      <ConnectedHandle
         type="target"
         position={Position.Left}
         id="media-input"

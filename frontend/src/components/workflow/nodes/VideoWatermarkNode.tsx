@@ -1,5 +1,6 @@
 import { memo, useState, useEffect } from "react";
-import { Handle, Position, NodeProps, useReactFlow } from "reactflow";
+import { Position, NodeProps, useReactFlow } from "reactflow";
+import { ConnectedHandle } from './ConnectedHandle';
 import { Stamp, Loader2, CheckCircle2 } from "lucide-react";
 import {
   Select,
@@ -93,7 +94,7 @@ function VideoWatermarkNode({ data, id }: NodeProps<VideoWatermarkNodeData>) {
       </div>
 
       {/* Input Handles */}
-      <Handle
+      <ConnectedHandle
         type="target"
         position={Position.Left}
         id="video"
@@ -101,7 +102,7 @@ function VideoWatermarkNode({ data, id }: NodeProps<VideoWatermarkNodeData>) {
         className="!w-3 !h-3 !border-2 !border-background"
         style={{ top: "30%", transform: "translateY(-50%)" }}
       />
-      <Handle
+      <ConnectedHandle
         type="target"
         position={Position.Left}
         id="watermark"
@@ -261,7 +262,7 @@ function VideoWatermarkNode({ data, id }: NodeProps<VideoWatermarkNodeData>) {
       <RunNodeButton nodeId={id} disabled={data.readOnly} isExecuting={isExecuting} />
 
       {/* Output Handle */}
-      <Handle
+      <ConnectedHandle
         type="source"
         position={Position.Right}
         id="video"

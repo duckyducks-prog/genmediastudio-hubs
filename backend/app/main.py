@@ -3,7 +3,7 @@ from uuid import uuid4
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from app.routers import generation, library, health, workflow, elevenlabs, video_processing, folders
+from app.routers import generation, library, health, workflow, elevenlabs, video_processing, folders, shared, scene_elements, workflow_metadata
 from app.logging_config import setup_logger
 from app.exceptions import AppError
 
@@ -16,7 +16,11 @@ DEFAULT_ORIGINS = [
     "https://a5df8c929ca74fbc80fe95abcebf06ed-br-2c5574706fc84239af4efff8b.fly.dev",
     "https://genmedia-frontend-otfo2ctxma-uc.a.run.app",
     "http://localhost:3000",
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://localhost:8000",
     "http://localhost:8080",
+    "http://localhost:8081",
 ]
 # Parse ALLOWED_ORIGINS, falling back to defaults if env var is empty or unset
 _origins_env = os.getenv("ALLOWED_ORIGINS", "").strip()
@@ -160,5 +164,8 @@ app.include_router(generation.router, prefix="/v1/generate", tags=["generation"]
 app.include_router(library.router, prefix="/v1/assets", tags=["assets"])
 app.include_router(folders.router, prefix="/v1/folders", tags=["folders"])
 app.include_router(workflow.router, prefix="/v1/workflows", tags=["workflows"])
+app.include_router(shared.router, prefix="/v1/shared", tags=["shared"])
+app.include_router(scene_elements.router, prefix="/v1/scene-elements", tags=["scene-elements"])
+app.include_router(workflow_metadata.router, prefix="/v1/workflow-metadata", tags=["workflow-metadata"])
 app.include_router(elevenlabs.router, tags=["elevenlabs"])
 app.include_router(video_processing.router, tags=["video-processing"])

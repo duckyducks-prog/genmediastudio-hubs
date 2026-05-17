@@ -1,4 +1,5 @@
 import "./styles/global.css";
+import "./styles/side-panel.css";
 
 import { Toaster } from "@/components/ui/toaster";
 import { createRoot } from "react-dom/client";
@@ -12,6 +13,10 @@ import { isApiError } from "@/lib/api-error";
 import { logger } from "@/lib/logger";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
+import SharedWorkflow from "./pages/SharedWorkflow";
+import WorkflowsPage from "./pages/WorkflowsPage";
+import AssetsPage from "./pages/AssetsPage";
+import ElementStudioPage from "./pages/ElementStudioPage";
 import { OfflineBanner } from "@/components/OfflineBanner";
 
 // Catch unhandled promise rejections for observability
@@ -54,6 +59,10 @@ const App = () => (
           <BrowserRouter>
             <Routes>
               <Route path="/" element={<Index />} />
+              <Route path="/share/:token" element={<SharedWorkflow />} />
+              <Route path="/workflows" element={<WorkflowsPage />} />
+              <Route path="/assets" element={<AssetsPage />} />
+              <Route path="/elements/:type" element={<ElementStudioPage />} />
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route path="*" element={<NotFound />} />
             </Routes>

@@ -1,7 +1,8 @@
 "use client";
 
 import { memo } from "react";
-import { NodeProps, Handle, Position } from "reactflow";
+import { NodeProps, Position } from "reactflow";
+import { ConnectedHandle } from './ConnectedHandle';
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Select,
@@ -57,12 +58,13 @@ function MergeVideosNode({ data, id }: NodeProps<MergeVideosNodeData>) {
     <Card className="w-[280px] bg-card border-border shadow-lg">
       {/* Input Handles */}
       {config.inputConnectors.map((connector, index) => (
-        <Handle
+        <ConnectedHandle
           key={connector.id}
           type="target"
           position={Position.Left}
           id={connector.id}
-          className="!w-3 !h-3 !bg-blue-500 !border-2 !border-background"
+          data-connector-type={connector.type}
+          className="!w-3 !h-3 !border-2"
           style={{ top: 60 + index * 28 }}
         />
       ))}
@@ -180,11 +182,12 @@ function MergeVideosNode({ data, id }: NodeProps<MergeVideosNodeData>) {
       </CardContent>
 
       {/* Output Handle */}
-      <Handle
+      <ConnectedHandle
         type="source"
         position={Position.Right}
         id="video"
-        className="!w-3 !h-3 !bg-blue-500 !border-2 !border-background"
+        data-connector-type="video"
+        className="!w-3 !h-3 !border-2"
         style={{ top: "50%" }}
       />
     </Card>

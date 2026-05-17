@@ -26,6 +26,7 @@ import "../nodes/ImageCompositeNode.register";
 import "../nodes/ExtractLastFrameNode.register";
 import "../nodes/VideoWatermarkNode.register";
 import "../nodes/VideoSegmentReplaceNode.register";
+import "../nodes/BurnCaptionsNode.register";
 
 // Action nodes
 import "../nodes/GenerateImageNode.register";

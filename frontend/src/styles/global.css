@@ -5,93 +5,528 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ─── Modal backdrop — heavier (attention focus) ────────────── */
+/* Used by Dialog and AlertDialog overlays */
+.modal-backdrop-layer {
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  background: rgba(1, 15, 17, 0.55);
+  transition: opacity 200ms ease-out;
+}
+
+@supports not (backdrop-filter: blur(6px)) {
+  .modal-backdrop-layer {
+    background: rgba(1, 15, 17, 0.7); /* heavier without blur */
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modal-backdrop-layer {
+    transition: opacity 0ms;
+  }
+}
+
+/* ─── Side panel backdrop — @supports fallback ───────────────── */
+@supports not (backdrop-filter: blur(5px)) {
+  .side-panel-backdrop {
+    background: rgba(1, 15, 17, 0.25); /* heavier without blur */
+  }
+}
+
+/* Body background always matches canvas — eliminates seams at viewport edges */
+html, body {
+  background: hsl(var(--background));
+  margin: 0;
+  padding: 0;
+}
+
 @layer base {
   /**
    * Tailwind CSS theme - Modern AI Studio Brand
    * tailwind.config.ts expects the following color variables to be expressed as HSL values.
    * A different format will require also updating the theme in tailwind.config.ts.
   */
-  /* Light mode: Lavender theme - bg:#D6C2D9, buttons:#46062B, text:#F8F5EE/#1F1F1F */
+  /* Light mode: HubSpot Sage system — sage canvas, teal accents */
   :root {
-    --background: 288 24% 81%;
-    --foreground: 0 0% 12%;
+    --background: 132 15% 76%;          /* #B9CDBE — HubSpot Sage canvas */
+    --foreground: 183 82% 9%;           /* #042729 — HubSpot Teal text */
 
-    --card: 288 20% 90%;
-    --card-foreground: 0 0% 12%;
+    --card: 132 15% 76%;                /* same sage — depth from shadows */
+    --card-foreground: 183 82% 9%;
 
-    --popover: 288 20% 90%;
-    --popover-foreground: 0 0% 12%;
+    --popover: 132 15% 76%;
+    --popover-foreground: 183 82% 9%;
 
-    --primary: 325 84% 15%;
-    --primary-foreground: 42 45% 95%;
+    --primary: 183 82% 9%;              /* #042729 — Teal as primary action */
+    --primary-foreground: 132 15% 76%;  /* sage on teal */
 
-    --secondary: 288 18% 75%;
-    --secondary-foreground: 0 0% 12%;
+    --secondary: 131 14% 70%;           /* #A6BCAA — slightly darker sage */
+    --secondary-foreground: 183 82% 9%;
 
-    --muted: 288 15% 85%;
-    --muted-foreground: 0 0% 35%;
+    --muted: 131 14% 70%;
+    --muted-foreground: 190 13% 35%;    /* #4E6266 */
 
-    --accent: 325 84% 15%;
-    --accent-foreground: 42 45% 95%;
+    --accent: 325 84% 15%;              /* #46062B — Plum, emphasis only */
+    --accent-foreground: 132 15% 76%;
 
-    --destructive: 0 84% 40%;
-    --destructive-foreground: 42 45% 95%;
+    --destructive: 18 100% 50%;         /* #FF4800 — Orange, unchanged */
+    --destructive-foreground: 132 15% 76%;
 
-    --border: 288 15% 70%;
-    --input: 288 15% 70%;
-    --ring: 325 84% 15%;
+    --border: 131 12% 85%;              /* lighter than card fill (76%) — reads as highlight */
+    --input: 131 12% 68%;
+    --ring: 183 82% 9%;                 /* teal focus ring */
 
     --radius: 0.75rem;
 
-    --sidebar-background: 288 24% 81%;
-    --sidebar-foreground: 0 0% 12%;
-    --sidebar-primary: 325 84% 15%;
-    --sidebar-primary-foreground: 42 45% 95%;
-    --sidebar-accent: 288 18% 75%;
-    --sidebar-accent-foreground: 325 84% 15%;
-    --sidebar-border: 288 15% 70%;
-    --sidebar-ring: 325 84% 15%;
+    --sidebar-background: 132 15% 76%;
+    --sidebar-foreground: 183 82% 9%;
+    --sidebar-primary: 183 82% 9%;
+    --sidebar-primary-foreground: 132 15% 76%;
+    --sidebar-accent: 131 14% 70%;
+    --sidebar-accent-foreground: 183 82% 9%;
+    --sidebar-border: 131 12% 68%;
+    --sidebar-ring: 183 82% 9%;
   }
 
-  /* Dark mode: Previous purple theme */
+  /* Dark mode: HubSpot Teal system */
   .dark {
-    --background: 283 88% 14%;
-    --foreground: 210 40% 98%;
+    --background: 187 89% 4%;          /* #010F11 — deepest canvas */
+    --foreground: 43 44% 95%;           /* #F8F5EE — HubSpot Cream */
 
-    --card: 283 50% 20%;
-    --card-foreground: 210 40% 98%;
+    --card: 187 87% 6%;                 /* #021A1D — cards / hero containers */
+    --card-foreground: 43 44% 95%;
 
-    --popover: 283 50% 20%;
-    --popover-foreground: 210 40% 98%;
+    --popover: 187 87% 6%;
+    --popover-foreground: 43 44% 95%;
 
-    --primary: 324 73% 84%;
-    --primary-foreground: 283 88% 14%;
+    --primary: 132 15% 76%;             /* #B9CDBE — HubSpot Sage, primary actions */
+    --primary-foreground: 187 89% 4%;   /* dark canvas on sage */
 
-    --secondary: 283 40% 28%;
-    --secondary-foreground: 210 40% 98%;
+    --secondary: 183 82% 9%;            /* #042729 — HubSpot Teal element surface */
+    --secondary-foreground: 43 44% 95%;
 
-    --muted: 283 40% 28%;
-    --muted-foreground: 210 40% 65%;
+    --muted: 183 82% 9%;
+    --muted-foreground: 180 13% 71%;    /* #A8C0C0 — muted teal-grey text */
 
-    --accent: 217 91% 60%;
-    --accent-foreground: 283 88% 14%;
+    --accent: 333 87% 87%;              /* #FCC3DC — HubSpot Pink, emphasis ONLY */
+    --accent-foreground: 187 89% 4%;
 
-    --destructive: 0 84% 60%;
-    --destructive-foreground: 0 0% 100%;
+    --destructive: 18 100% 50%;         /* #FF4800 — HubSpot Orange */
+    --destructive-foreground: 43 44% 95%;
 
-    --border: 283 40% 28%;
-    --input: 283 40% 28%;
-    --ring: 262 83% 58%;
+    --border: 183 50% 12%;              /* subtle teal hairline */
+    --input: 183 50% 12%;
+    --ring: 132 15% 76%;                /* sage focus ring */
 
-    --sidebar-background: 283 88% 14%;
-    --sidebar-foreground: 210 40% 98%;
-    --sidebar-primary: 262 83% 58%;
-    --sidebar-primary-foreground: 283 88% 14%;
-    --sidebar-accent: 283 40% 28%;
-    --sidebar-accent-foreground: 262 83% 58%;
-    --sidebar-border: 283 40% 28%;
-    --sidebar-ring: 262 83% 58%;
+    --sidebar-background: 187 89% 4%;
+    --sidebar-foreground: 43 44% 95%;
+    --sidebar-primary: 132 15% 76%;
+    --sidebar-primary-foreground: 187 89% 4%;
+    --sidebar-accent: 183 82% 9%;
+    --sidebar-accent-foreground: 132 15% 76%;
+    --sidebar-border: 183 50% 12%;
+    --sidebar-ring: 132 15% 76%;
   }
+}
+
+/* Surface + shadow tokens — light mode (sage canvas, lifted-sage highlight + soft-teal drop) */
+:root {
+  --bg-canvas: #B9CDBE;
+  --bg-surface: #B9CDBE;
+  --bg-element: #B9CDBE;
+  --bg-inset: #A6BCAA;
+  --text-primary-color: #042729;
+  --text-secondary-color: #2E4548;
+  --text-muted-color: #4E6266;
+  --text-hint-color: #6E8085;
+  --shadow-raised-lg:      -3px   -3px   8px  rgba(225,235,220,0.85), 3px   3px   9px  rgba(20,60,65,0.13);
+  --shadow-raised-md:      -2.5px -2.5px 6px  rgba(225,235,220,0.9),  2.5px 2.5px 7px  rgba(20,60,65,0.14);
+  --shadow-raised-sm:      -1.5px -1.5px 3.5px rgba(225,235,220,0.85),1.5px 1.5px 4px  rgba(20,60,65,0.14);
+  --shadow-pressed-cv:     inset 1.5px 1.5px 4px rgba(20,60,65,0.16), inset -1.5px -1.5px 4px rgba(225,235,220,0.75);
+  --shadow-pressed-deep-cv:inset 3px   3px   7px rgba(20,60,65,0.18), inset -3px   -3px   7px rgba(225,235,220,0.8);
+  --shadow-modal-cv:       -3px   -3px   8px  rgba(225,235,220,0.85), 3px   3px   9px  rgba(20,60,65,0.13);
+  --shadow-pink-btn:       -3px   -3px   8px  rgba(225,235,220,0.7),  3px   3px   9px  rgba(20,60,65,0.18);
+}
+
+/* Surface + shadow tokens — dark mode overrides */
+.dark {
+  --bg-canvas: #010F11;
+  --bg-surface: #021A1D;
+  --bg-element: #042729;
+  --bg-inset: #021A1D;
+  --text-primary-color: #F8F5EE;
+  --text-secondary-color: #B9CDBE;
+  --text-muted-color: #A8C0C0;
+  --text-hint-color: #7A8E90;
+  --shadow-raised-lg:      -6px -6px 14px rgba(30,100,105,0.3),  6px  6px 16px rgba(0,0,0,0.6);
+  --shadow-raised-md:      -4px -4px  9px rgba(30,100,105,0.4),  4px  4px 10px rgba(0,0,0,0.55);
+  --shadow-raised-sm:      -3px -3px  7px rgba(30,100,105,0.4),  3px  3px  8px rgba(0,0,0,0.55);
+  --shadow-pressed-cv:     inset 2px  2px 5px rgba(0,0,0,0.5),   inset -2px -2px 5px rgba(30,100,105,0.25);
+  --shadow-pressed-deep-cv:inset 4px  4px 8px rgba(0,0,0,0.6),   inset -4px -4px 8px rgba(30,100,105,0.35);
+  --shadow-modal-cv:      -10px -10px 22px rgba(30,100,105,0.4), 10px 10px 28px rgba(0,0,0,0.7);
+  --shadow-pink-btn:       -3px -3px  8px rgba(255,200,220,0.18), 3px  3px  9px rgba(0,0,0,0.5);
+}
+
+/* Soft-tint primary button — teal wash in light, sage wash in dark */
+.btn-soft-tint {
+  background: rgba(4, 39, 41, 0.08);
+  color: hsl(var(--primary));
+  border: 1px solid rgba(4, 39, 41, 0.2);
+  cursor: pointer;
+  padding: 9px 18px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  transition: background 150ms ease-out, border-color 150ms ease-out, transform 120ms ease-out;
+  white-space: nowrap;
+}
+.btn-soft-tint:hover {
+  background: rgba(4, 39, 41, 0.12);
+  border-color: rgba(4, 39, 41, 0.3);
+}
+.btn-soft-tint:active {
+  background: rgba(4, 39, 41, 0.16);
+  transform: translateY(1px);
+}
+.dark .btn-soft-tint {
+  background: rgba(185, 205, 190, 0.12);
+  color: #B9CDBE;
+  border-color: rgba(185, 205, 190, 0.24);
+}
+.dark .btn-soft-tint:hover {
+  background: rgba(185, 205, 190, 0.18);
+  border-color: rgba(185, 205, 190, 0.36);
+}
+.dark .btn-soft-tint:active {
+  background: rgba(185, 205, 190, 0.22);
+}
+
+/* Dashboard card */
+.dash-card {
+  background: hsl(var(--card));
+  border-radius: 14px;
+  padding: 14px;
+  cursor: pointer;
+  box-shadow: var(--shadow-raised-md);
+  transition: box-shadow 200ms ease-out, transform 200ms ease-out;
+  position: relative;
+}
+.dash-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-raised-lg);
+}
+
+/* Tab pill (inset container) */
+.tab-pill-dash {
+  display: inline-flex;
+  background: hsl(var(--secondary));
+  border-radius: 999px;
+  padding: 5px;
+  box-shadow: var(--shadow-pressed-cv);
+}
+
+/* Tab option */
+.tab-opt-dash {
+  padding: 8px 16px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+  color: hsl(var(--muted-foreground));
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  font-family: inherit;
+  transition: color 120ms ease-out;
+  white-space: nowrap;
+}
+.tab-opt-dash:hover { color: hsl(var(--foreground)); }
+.tab-opt-dash.active {
+  background: hsl(var(--secondary));
+  color: hsl(var(--primary));
+  box-shadow: var(--shadow-raised-sm);
+}
+
+/* ─── Carousel ──────────────────────────────────────────────── */
+.carousel-wrap {
+  position: relative;
+  overflow: clip;
+  overflow-clip-margin: content-box 24px;
+  margin-left: -20px;
+}
+
+.carousel-wrap::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 14px;
+  width: 96px;
+  background: linear-gradient(
+    to left,
+    rgba(1, 17, 19, 0) 0%,
+    rgba(1, 17, 19, 0.6) 50%,
+    rgba(1, 17, 19, 1) 100%
+  );
+  pointer-events: none;
+  z-index: 3;
+  opacity: 0;
+  transition: opacity 200ms ease-out;
+}
+
+.carousel-wrap.scrolled-from-start::before {
+  opacity: 1;
+}
+
+.carousel-wrap::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 14px;
+  width: 96px;
+  background: linear-gradient(
+    to right,
+    rgba(1, 17, 19, 0) 0%,
+    rgba(1, 17, 19, 0.6) 50%,
+    rgba(1, 17, 19, 1) 100%
+  );
+  pointer-events: none;
+  z-index: 3;
+}
+
+.carousel {
+  display: flex;
+  gap: 18px;
+  overflow-x: auto;
+  overflow-y: visible;
+  scroll-snap-type: x mandatory;
+  scroll-behavior: smooth;
+  padding: 20px 20px 14px 20px;
+  margin-top: -20px;
+  scroll-padding-left: 20px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(185, 205, 190, 0.25) transparent;
+}
+
+.carousel::-webkit-scrollbar { height: 6px; }
+.carousel::-webkit-scrollbar-track { background: transparent; }
+.carousel::-webkit-scrollbar-thumb {
+  background: rgba(185, 205, 190, 0.25);
+  border-radius: 3px;
+}
+.carousel::-webkit-scrollbar-thumb:hover { background: rgba(185, 205, 190, 0.4); }
+
+.carousel > .dash-card {
+  flex: 0 0 300px;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+}
+
+.asset-carousel > .dash-card {
+  flex: 0 0 240px;
+}
+
+.carousel-arrow {
+  position: absolute;
+  top: calc(50% - 7px);
+  transform: translateY(-50%);
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: hsl(var(--secondary));
+  border: 1px solid rgba(185, 205, 190, 0.18);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: hsl(var(--primary));
+  box-shadow: var(--shadow-raised-md);
+  opacity: 0;
+  transition: opacity 200ms ease-out, background 120ms ease-out;
+  z-index: 5;
+}
+
+.carousel-wrap:hover .carousel-arrow { opacity: 0.95; }
+.carousel-arrow:hover { background: hsl(183 82% 12%); }
+.carousel-arrow.left { left: -14px; }
+.carousel-arrow.right { right: -14px; }
+
+.carousel-arrow:disabled {
+  opacity: 0 !important;
+  pointer-events: none;
+}
+
+/* Toolbar neumorphic buttons — light mode defaults */
+:root {
+  --btn-bg:               #B9CDBE;
+  --btn-raised-highlight: rgba(225, 235, 220, 0.85);
+  --btn-raised-drop:      rgba(4, 39, 41, 0.2);
+  --btn-pressed-dark:     rgba(4, 39, 41, 0.22);
+  --btn-pressed-light:    rgba(225, 235, 220, 0.75);
+  --btn-icon-primary:     #042729;
+  --btn-icon-muted:       #4E6266;
+  --btn-icon-danger:      #FF4800;
+  --btn-press-transition: 120ms ease-out;
+}
+/* Toolbar tokens — dark mode overrides */
+.dark {
+  --btn-bg:               #042729;
+  --btn-raised-highlight: rgba(30, 100, 105, 0.4);
+  --btn-raised-drop:      rgba(0, 0, 0, 0.35);
+  --btn-pressed-dark:     rgba(0, 0, 0, 0.6);
+  --btn-pressed-light:    rgba(30, 100, 105, 0.3);
+  --btn-icon-primary:     #B9CDBE;
+  --btn-icon-muted:       #A8C0C0;
+  --btn-icon-danger:      #FF6B6B;
+}
+
+.toolbar-btn {
+  background: hsl(var(--card));
+  border: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--btn-icon-primary);
+  position: relative;
+  overflow: hidden;
+  box-shadow:
+    -1px -1px 9px  var(--btn-raised-highlight),
+     4px  4px 8px  var(--btn-raised-drop);
+  transition: box-shadow var(--btn-press-transition), transform var(--btn-press-transition);
+}
+
+.toolbar-btn::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(
+    circle at var(--glow-x, 50%) var(--glow-y, 50%),
+    rgba(252, 195, 220, 0.18) 0%,
+    transparent 65%
+  );
+  opacity: 0;
+  transition: opacity 150ms ease-out;
+  pointer-events: none;
+}
+
+.toolbar-btn:hover::after {
+  opacity: 1;
+}
+
+.toolbar-btn:active:not(:disabled) {
+  box-shadow:
+    inset 3px 3px 6px  var(--btn-pressed-dark),
+    inset -3px -3px 6px var(--btn-pressed-light);
+  transform: translateY(1px);
+}
+
+.toolbar-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.toolbar-btn.icon-only {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+}
+
+.toolbar-btn.text-pill {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  gap: 6px;
+}
+
+.toolbar-btn.muted  { color: var(--btn-icon-muted);  }
+.toolbar-btn.danger { color: var(--btn-icon-danger); }
+
+/* Palette node items — same raised language as toolbar buttons */
+.palette-item {
+  background: hsl(var(--card));
+  border: none;
+  position: relative;
+  overflow: hidden;
+  box-shadow:
+    -1px -1px 9px  var(--btn-raised-highlight),
+     4px  4px 8px  var(--btn-raised-drop);
+  transition: box-shadow var(--btn-press-transition), transform var(--btn-press-transition);
+}
+
+.palette-item:active {
+  box-shadow:
+    inset 3px 3px 6px  var(--btn-pressed-dark),
+    inset -3px -3px 6px var(--btn-pressed-light);
+  transform: translateY(1px);
+}
+
+.palette-item::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(
+    circle at var(--glow-x, 50%) var(--glow-y, 50%),
+    rgba(252, 195, 220, 0.12) 0%,
+    transparent 65%
+  );
+  opacity: 0;
+  transition: opacity 150ms ease-out;
+  pointer-events: none;
+}
+
+.palette-item:hover::after {
+  opacity: 1;
+}
+
+/* Nav neumorphic pressed state — light mode defaults */
+:root {
+  --nav-active-shadow-inner-dark:  rgba(4, 39, 41, 0.22);
+  --nav-active-shadow-inner-light: rgba(225, 235, 220, 0.85);
+  --nav-active-shadow-offset:      4px;
+  --nav-active-shadow-blur:        8px;
+  --nav-active-icon-color:         #042729;
+  --nav-icon-default-color:        #4E6266;
+  --nav-active-transition:         150ms ease-out;
+}
+/* Nav tokens — dark mode overrides */
+.dark {
+  --nav-active-shadow-inner-dark:  rgba(0, 0, 0, 0.6);
+  --nav-active-shadow-inner-light: rgba(30, 100, 105, 0.35);
+  --nav-active-icon-color:         #F8F5EE;
+  --nav-icon-default-color:        #A8C0C0;
+}
+
+.nav-cell {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--nav-icon-default-color);
+  background: transparent;
+  transition: box-shadow var(--nav-active-transition), color var(--nav-active-transition);
+}
+
+.nav-cell.nav-cell-active {
+  background: hsl(var(--background));
+  color: var(--nav-active-icon-color);
+  box-shadow:
+    inset var(--nav-active-shadow-offset) var(--nav-active-shadow-offset) var(--nav-active-shadow-blur) var(--nav-active-shadow-inner-dark),
+    inset calc(var(--nav-active-shadow-offset) * -1) calc(var(--nav-active-shadow-offset) * -1) var(--nav-active-shadow-blur) var(--nav-active-shadow-inner-light);
 }
 
 @layer base {

@@ -1,4 +1,5 @@
-import { Handle, Position } from "reactflow";
+import { Position } from "reactflow";
+import { ConnectedHandle } from './ConnectedHandle';
 import { AlertTriangle } from "lucide-react";
 import {
   NODE_CONFIGURATIONS,
@@ -24,7 +25,7 @@ export default function NodeErrorFallback({
     <div className="relative px-4 py-3 rounded-lg border border-destructive/50 bg-destructive/10 min-w-[180px]">
       {/* Render input handles to keep edges connected */}
       {config?.inputConnectors?.map((connector, i) => (
-        <Handle
+        <ConnectedHandle
           key={`in-${connector.id}`}
           type="target"
           position={Position.Left}
@@ -47,7 +48,7 @@ export default function NodeErrorFallback({
 
       {/* Render output handles to keep edges connected */}
       {config?.outputConnectors?.map((connector, i) => (
-        <Handle
+        <ConnectedHandle
           key={`out-${connector.id}`}
           type="source"
           position={Position.Right}

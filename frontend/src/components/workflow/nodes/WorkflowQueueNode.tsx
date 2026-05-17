@@ -1,5 +1,6 @@
 import { memo, useMemo } from "react";
-import { Handle, Position, NodeProps, useReactFlow } from "reactflow";
+import { Position, NodeProps, useReactFlow } from "reactflow";
+import { ConnectedHandle } from './ConnectedHandle';
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
@@ -171,7 +172,7 @@ function WorkflowQueueNode({ data, id }: NodeProps<WorkflowQueueNodeData>) {
       )}
 
       {/* Output Handle */}
-      <Handle
+      <ConnectedHandle
         type="source"
         position={Position.Right}
         id="text"

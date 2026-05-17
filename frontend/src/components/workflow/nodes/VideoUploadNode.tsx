@@ -1,6 +1,7 @@
 import { logger } from "@/lib/logger";
 import { memo, useState, useCallback, useRef, useEffect } from "react";
-import { Handle, Position, NodeProps, useReactFlow } from "reactflow";
+import { Position, NodeProps, useReactFlow } from "reactflow";
+import { ConnectedHandle } from './ConnectedHandle';
 import { Button } from "@/components/ui/button";
 import { Upload, X, Film, Play, FolderOpen, Loader2 } from "lucide-react";
 import { VideoInputNodeData } from "../types";
@@ -599,7 +600,7 @@ function VideoUploadNode({ data, id }: NodeProps<VideoInputNodeData>) {
       <RunNodeButton nodeId={id} isExecuting={isExecuting} disabled={data.readOnly} />
 
       {/* Output Handle */}
-      <Handle
+      <ConnectedHandle
         type="source"
         position={Position.Right}
         id="video"

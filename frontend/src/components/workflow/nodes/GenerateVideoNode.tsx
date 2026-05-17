@@ -1,5 +1,6 @@
 import { memo } from "react";
-import { Handle, Position, NodeProps } from "reactflow";
+import { Position, NodeProps } from "reactflow";
+import { ConnectedHandle } from './ConnectedHandle';
 import { Button } from "@/components/ui/button";
 import { GenerateVideoNodeData, NODE_CONFIGURATIONS, NodeType } from "../types";
 import {
@@ -144,7 +145,7 @@ function GenerateVideoNode({ data, id }: NodeProps<GenerateVideoNodeData>) {
               key={input.id}
               className="flex items-center gap-2 relative h-6"
             >
-              <Handle
+              <ConnectedHandle
                 type="target"
                 position={Position.Left}
                 id={input.id}
@@ -301,7 +302,7 @@ function GenerateVideoNode({ data, id }: NodeProps<GenerateVideoNodeData>) {
       </div>
 
       {/* Output Handle - Right side */}
-      <Handle
+      <ConnectedHandle
         type="source"
         position={Position.Right}
         id="video"

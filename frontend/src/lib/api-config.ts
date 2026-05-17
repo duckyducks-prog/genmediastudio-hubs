@@ -48,6 +48,7 @@ export const API_ENDPOINTS = {
     applyFilters: `${VEO_API_BASE_URL}/v1/video/apply-filters`,
     addWatermark: `${VEO_API_BASE_URL}/v1/video/add-watermark`,
     segmentReplace: `${VEO_API_BASE_URL}/v1/video/segment-replace`,
+    burnCaptions: `${VEO_API_BASE_URL}/v1/video/burn-captions`,
   },
 
   // Assets endpoints
@@ -76,6 +77,12 @@ export const API_ENDPOINTS = {
     delete: (id: string) => `${VEO_API_BASE_URL}/v1/folders/${id}`,
     deleteWithContents: (id: string) => `${VEO_API_BASE_URL}/v1/folders/${id}/contents`,
     downloadZip: (id: string) => `${VEO_API_BASE_URL}/v1/folders/${id}/download`,
+  },
+
+  // Workflow metadata (AI name/description drafting)
+  workflowMetadata: {
+    generate: `${VEO_API_BASE_URL}/v1/workflow-metadata`,
+    get: (id: string) => `${VEO_API_BASE_URL}/v1/workflow-metadata/${id}`,
   },
 
   // Legacy library alias for backward compatibility during migration

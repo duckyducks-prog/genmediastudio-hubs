@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     # ElevenLabs API key (for voice changing)
     elevenlabs_api_key: str = ""
 
+    # OpenAI API key (for Whisper audio transcription in burn captions)
+    openai_api_key: str = ""
+
     # Model names
     gemini_image_model: str = "gemini-3-pro-image-preview"  # Nano Banana Pro - Gemini 3 Pro Image
     gemini_text_model: str = "gemini-2.0-flash"  # Gemini 2.0 Flash model

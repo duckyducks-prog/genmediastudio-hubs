@@ -163,7 +163,8 @@ async def generate_image(
             user_id=user["uid"],
             reference_images=reference_images_data,
             aspect_ratio=request.aspect_ratio,
-            resolution=request.resolution
+            resolution=request.resolution,
+            folder_id=request.folder_id
         )
     except AppError:
         # Let custom exceptions (RateLimitError, NoContentGeneratedError, etc.) propagate
@@ -271,7 +272,8 @@ async def generate_video(
             aspect_ratio=request.aspect_ratio,
             duration_seconds=request.duration_seconds,
             generate_audio=request.generate_audio,
-            seed=request.seed
+            seed=request.seed,
+            folder_id=request.folder_id
         )
     except AppError:
         # Let custom exceptions propagate to global handler

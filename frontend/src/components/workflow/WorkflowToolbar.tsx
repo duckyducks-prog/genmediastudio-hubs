@@ -1,4 +1,4 @@
-import { Button } from "@/components/ui/button";
+import { useState, useEffect, useRef } from "react";
 import { Spinner } from "@/components/ui/spinner";
 import {
   Trash2,
@@ -10,11 +10,13 @@ import {
   Save,
   List,
   StopCircle,
-  Package,
+  Share2,
+  LayoutTemplate,
+  PanelRightClose,
+  PanelRightOpen,
+  Settings,
 } from "lucide-react";
 import { useReactFlow } from "reactflow";
-import { useWorkflow, GenerationMode } from "@/contexts/WorkflowContext";
-import { ThemeToggle } from "@/components/ui/theme-toggle";
 
 interface WorkflowToolbarProps {
   onClearCanvas: () => void;
@@ -22,15 +24,16 @@ interface WorkflowToolbarProps {
   onAbortWorkflow: () => void;
   onResetWorkflow: () => void;
   onSaveWorkflow: () => void;
-  onSaveAsNode: () => void;
   onLoadWorkflow: () => void;
+  onShareWorkflow?: () => void;
+  onOpenTemplateMode?: () => void;
+  onOpenSettings: () => void;
+  exposedNodeCount?: number;
   isExecuting: boolean;
   executionProgress?: Map<string, string>;
   totalNodes?: number;
   isReadOnly?: boolean;
   isInsideCompound?: boolean;
-  parallelExecution?: boolean;
-  onToggleParallelExecution?: () => void;
 }
 
 export default function WorkflowToolbar({
@@ -39,217 +42,190 @@ export default function WorkflowToolbar({
   onAbortWorkflow,
   onResetWorkflow,
   onSaveWorkflow,
-  onSaveAsNode,
   onLoadWorkflow,
+  onShareWorkflow,
+  onOpenTemplateMode,
+  onOpenSettings,
+  exposedNodeCount = 0,
   isExecuting,
   executionProgress: _executionProgress,
   totalNodes: _totalNodes,
   isReadOnly = false,
   isInsideCompound = false,
-  parallelExecution = false,
-  onToggleParallelExecution,
 }: WorkflowToolbarProps) {
   const { zoomIn, zoomOut, fitView } = useReactFlow();
-  const { state, dispatch } = useWorkflow();
+  const [collapsed, setCollapsed] = useState(false);
+  const toolbarRef = useRef<HTMLDivElement>(null);
 
-  const toggleMode = () => {
-    const next: GenerationMode = state.mode === "explore" ? "project" : "explore";
-    dispatch({ type: "SET_MODE", payload: next });
-  };
+  useEffect(() => {
+    const el = toolbarRef.current;
+    if (!el) return;
+    const handleMouseMove = (e: MouseEvent) => {
+      const target = (e.target as HTMLElement).closest('.toolbar-btn') as HTMLElement | null;
+      if (!target) return;
+      const rect = target.getBoundingClientRect();
+      target.style.setProperty('--glow-x', `${((e.clientX - rect.left) / rect.width) * 100}%`);
+      target.style.setProperty('--glow-y', `${((e.clientY - rect.top) / rect.height) * 100}%`);
+    };
+    el.addEventListener('mousemove', handleMouseMove);
+    return () => el.removeEventListener('mousemove', handleMouseMove);
+  }, []);
 
-  // Format last saved time
-  const getLastSavedText = () => {
-    if (!state.lastSaved) return null;
-
-    const now = new Date();
-    const diff = Math.floor((now.getTime() - state.lastSaved.getTime()) / 1000);
-
-    if (diff < 60) return "Saved just now";
-    if (diff < 3600) return `Saved ${Math.floor(diff / 60)}m ago`;
-    if (diff < 86400) return `Saved ${Math.floor(diff / 3600)}h ago`;
-    return `Saved ${Math.floor(diff / 86400)}d ago`;
-  };
 
   return (
-    <div className="absolute top-2 right-2 flex items-center gap-2 bg-card border border-border rounded-lg px-3 py-1.5 shadow-lg z-10">
-      {/* Unsaved indicator and last saved time */}
-      <div className="flex items-center gap-2 text-xs">
-        {state.isDirty && (
-          <div
-            className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"
-            title="Unsaved changes"
-          />
-        )}
-        {getLastSavedText() && (
-          <span className="text-muted-foreground whitespace-nowrap">
-            {getLastSavedText()}
-          </span>
-        )}
-      </div>
-
-      {/* Separator */}
-      {(state.isDirty || getLastSavedText()) && (
-        <div className="w-px h-6 bg-border" />
-      )}
-
-      <Button
-        onClick={onSaveWorkflow}
-        variant="default"
-        size="icon"
-        className="h-8 w-8"
-        title={isReadOnly ? "Read-Only Template" : isInsideCompound ? "Inside Compound Node" : "Save Workflow"}
-        disabled={isReadOnly || isInsideCompound}
-      >
-        <Save className="w-3.5 h-3.5" />
-      </Button>
-
-      <Button
-        onClick={onSaveAsNode}
-        variant="outline"
-        size="sm"
-        className="h-8 px-2"
-        title="Save as reusable compound node"
-        disabled={isReadOnly || isInsideCompound}
-      >
-        <Package className="w-3.5 h-3.5 mr-1" />
-        <span className="text-xs">Save as Node</span>
-      </Button>
-
-      <Button
-        onClick={onLoadWorkflow}
-        variant="outline"
-        size="icon"
-        className="h-8 w-8"
-        title="Load Workflow"
-        aria-label="Load Workflow"
-        disabled={isInsideCompound}
-      >
-        <List className="w-3.5 h-3.5" />
-      </Button>
-
-      <div className="w-px h-6 bg-border mx-0.5" />
-
-      <ThemeToggle />
-
-      <div className="w-px h-6 bg-border mx-0.5" />
-
+    <div ref={toolbarRef} className="absolute top-2 right-2 flex items-center gap-2 bg-card/90 border border-border rounded-lg px-3 py-1.5 shadow-lg z-10">
+      {/* Collapse toggle — meta control, no neumorphic treatment */}
       <button
-        onClick={toggleMode}
-        disabled={isExecuting}
-        className={`h-7 px-2 rounded text-[10px] font-medium transition-colors ${
-          state.mode === "project"
-            ? "bg-amber-500/20 text-amber-400 border border-amber-500/40"
-            : "bg-muted text-muted-foreground border border-transparent hover:bg-muted/80"
-        } ${isExecuting ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
-        title={state.mode === "explore"
-          ? "Explore: Uses lightweight models for fast, low-cost experimentation"
-          : "Project: Uses premium models for final-quality output"}
+        onClick={() => setCollapsed((c) => !c)}
+        className="p-1 rounded hover:bg-muted transition-colors"
+        title={collapsed ? "Expand toolbar" : "Collapse toolbar"}
       >
-        {state.mode === "explore" ? "Explore" : "Project"}
-      </button>
-
-      <button
-        onClick={onToggleParallelExecution}
-        disabled={isExecuting}
-        className={`h-7 px-2 rounded text-[10px] font-medium transition-colors ${
-          parallelExecution
-            ? "bg-primary/20 text-primary border border-primary/40"
-            : "bg-muted text-muted-foreground border border-transparent hover:bg-muted/80"
-        } ${isExecuting ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
-        title={parallelExecution ? "Parallel: API nodes run simultaneously (faster, may hit rate limits)" : "Sequential: API nodes run one at a time (safer for complex workflows)"}
-      >
-        {parallelExecution ? "Parallel" : "Sequential"}
-      </button>
-
-      <Button
-        onClick={onExecuteWorkflow}
-        disabled={isExecuting}
-        variant="default"
-        size="sm"
-        className="h-8 bg-primary hover:bg-primary/90 text-primary-foreground px-3"
-        title="Run All Nodes"
-      >
-        {isExecuting ? (
-          <Spinner size={16} className="mr-1" />
+        {collapsed ? (
+          <PanelRightOpen className="w-3.5 h-3.5 text-muted-foreground" />
         ) : (
-          <Play className="w-3.5 h-3.5 mr-1" />
+          <PanelRightClose className="w-3.5 h-3.5 text-muted-foreground" />
         )}
-        {isExecuting ? "Running" : "Run All"}
-      </Button>
+      </button>
 
-      {isExecuting && (
-        <Button
-          onClick={onAbortWorkflow}
-          variant="destructive"
-          size="icon"
-          className="h-8 w-8"
-          title="Stop Workflow"
-          aria-label="Stop Workflow"
+      {!collapsed && <>
+        {/* Run All */}
+        <button
+          onClick={onExecuteWorkflow}
+          className="toolbar-btn text-pill"
+          disabled={isExecuting}
+          title="Run All Nodes"
         >
-          <StopCircle className="w-3.5 h-3.5" />
-        </Button>
-      )}
+          {isExecuting ? <Spinner size={14} /> : <Play className="w-3.5 h-3.5" />}
+          <span>{isExecuting ? "Running" : "Run All"}</span>
+        </button>
 
-      <Button
-        onClick={onResetWorkflow}
-        disabled={isExecuting || isReadOnly}
-        variant="ghost"
-        size="icon"
-        className="h-8 w-8"
-        title={isReadOnly ? "Read-Only Template" : "Reset Workflow"}
-        aria-label="Reset Workflow"
-      >
-        <RotateCcw className="w-3.5 h-3.5" />
-      </Button>
+        {/* Stop */}
+        {isExecuting && (
+          <button
+            onClick={onAbortWorkflow}
+            className="toolbar-btn icon-only danger"
+            title="Stop Workflow"
+            aria-label="Stop Workflow"
+          >
+            <StopCircle className="w-3.5 h-3.5" />
+          </button>
+        )}
 
-      <div className="w-px h-6 bg-border mx-0.5" />
+        {/* Make into app */}
+        {onShareWorkflow && !isReadOnly && (
+          <button
+            onClick={onShareWorkflow}
+            className="toolbar-btn text-pill"
+            title="Create share link for temp users"
+            disabled={isInsideCompound}
+          >
+            <Share2 className="w-3.5 h-3.5" />
+            <span>Make into app</span>
+          </button>
+        )}
 
-      <Button
-        onClick={() => zoomIn()}
-        variant="ghost"
-        size="icon"
-        className="h-8 w-8"
-        title="Zoom In"
-        aria-label="Zoom In"
-      >
-        <ZoomIn className="w-3.5 h-3.5" />
-      </Button>
+        {/* Template */}
+        {onOpenTemplateMode && !isReadOnly && exposedNodeCount > 0 && (
+          <button
+            onClick={onOpenTemplateMode}
+            className="toolbar-btn text-pill"
+            title="Run workflow in simplified template form"
+            disabled={isInsideCompound}
+          >
+            <LayoutTemplate className="w-3.5 h-3.5" />
+            <span>Template</span>
+          </button>
+        )}
 
-      <Button
-        onClick={() => zoomOut()}
-        variant="ghost"
-        size="icon"
-        className="h-8 w-8"
-        title="Zoom Out"
-        aria-label="Zoom Out"
-      >
-        <ZoomOut className="w-3.5 h-3.5" />
-      </Button>
+        <div className="w-px h-6 bg-border mx-0.5" />
 
-      <Button
-        onClick={() => fitView()}
-        variant="ghost"
-        size="icon"
-        className="h-8 w-8"
-        title="Fit View"
-        aria-label="Fit View"
-      >
-        <Maximize2 className="w-3.5 h-3.5" />
-      </Button>
+        {/* Save */}
+        <button
+          onClick={onSaveWorkflow}
+          className="toolbar-btn icon-only"
+          title={isReadOnly ? "Read-Only Template" : isInsideCompound ? "Inside Compound Node" : "Save Workflow"}
+          disabled={isReadOnly || isInsideCompound}
+        >
+          <Save className="w-3.5 h-3.5" />
+        </button>
 
-      <div className="w-px h-6 bg-border mx-0.5" />
+        {/* Load */}
+        <button
+          onClick={onLoadWorkflow}
+          className="toolbar-btn icon-only muted"
+          title="Load Workflow"
+          aria-label="Load Workflow"
+          disabled={isInsideCompound}
+        >
+          <List className="w-3.5 h-3.5" />
+        </button>
 
-      <Button
-        onClick={onClearCanvas}
-        variant="ghost"
-        size="icon"
-        className="h-8 w-8"
-        title={isReadOnly ? "Read-Only Template" : "Clear Canvas"}
-        aria-label="Clear Canvas"
-        disabled={isReadOnly}
-      >
-        <Trash2 className="w-3.5 h-3.5 text-destructive" />
-      </Button>
+        {/* Reset */}
+        <button
+          onClick={onResetWorkflow}
+          className="toolbar-btn icon-only muted"
+          disabled={isExecuting || isReadOnly}
+          title={isReadOnly ? "Read-Only Template" : "Reset Workflow"}
+          aria-label="Reset Workflow"
+        >
+          <RotateCcw className="w-3.5 h-3.5" />
+        </button>
+
+        {/* Settings */}
+        <button
+          onClick={onOpenSettings}
+          className="toolbar-btn icon-only muted"
+          title="Settings"
+          aria-label="Settings"
+        >
+          <Settings className="w-3.5 h-3.5" />
+        </button>
+
+        <div className="w-px h-6 bg-border mx-0.5" />
+
+        {/* Zoom In */}
+        <button
+          onClick={() => zoomIn()}
+          className="toolbar-btn icon-only muted"
+          title="Zoom In"
+          aria-label="Zoom In"
+        >
+          <ZoomIn className="w-3.5 h-3.5" />
+        </button>
+
+        {/* Zoom Out */}
+        <button
+          onClick={() => zoomOut()}
+          className="toolbar-btn icon-only muted"
+          title="Zoom Out"
+          aria-label="Zoom Out"
+        >
+          <ZoomOut className="w-3.5 h-3.5" />
+        </button>
+
+        {/* Fit View */}
+        <button
+          onClick={() => fitView()}
+          className="toolbar-btn icon-only muted"
+          title="Fit View"
+          aria-label="Fit View"
+        >
+          <Maximize2 className="w-3.5 h-3.5" />
+        </button>
+
+        <div className="w-px h-6 bg-border mx-0.5" />
+
+        {/* Clear Canvas */}
+        <button
+          onClick={onClearCanvas}
+          className="toolbar-btn icon-only danger"
+          title={isReadOnly ? "Read-Only Template" : "Clear Canvas"}
+          aria-label="Clear Canvas"
+          disabled={isReadOnly}
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+        </button>
+      </>}
     </div>
   );
 }

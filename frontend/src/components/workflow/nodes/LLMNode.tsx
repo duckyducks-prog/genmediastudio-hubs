@@ -1,5 +1,6 @@
 import { memo } from 'react';
-import { Handle, Position, NodeProps } from 'reactflow';
+import { Position, NodeProps } from 'reactflow';
+import { ConnectedHandle } from './ConnectedHandle';
 import { LLMNodeData } from '../types';
 import { Brain, Loader2, CheckCircle2, AlertCircle, Power, Maximize2 } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
@@ -73,7 +74,7 @@ function LLMNode({ data, id }: NodeProps<LLMNodeData>) {
       {/* Input Handles - Left side */}
       <div className="space-y-3 mb-4">
         <div className="flex items-center gap-2 relative h-6">
-          <Handle
+          <ConnectedHandle
             type="target"
             position={Position.Left}
             id="prompt"
@@ -85,7 +86,7 @@ function LLMNode({ data, id }: NodeProps<LLMNodeData>) {
           </div>
         </div>
         <div className="flex items-center gap-2 relative h-6">
-          <Handle
+          <ConnectedHandle
             type="target"
             position={Position.Left}
             id="context"
@@ -177,7 +178,7 @@ function LLMNode({ data, id }: NodeProps<LLMNodeData>) {
       </div>
 
       {/* Output Handle - Right side */}
-      <Handle
+      <ConnectedHandle
         type="source"
         position={Position.Right}
         id="response"

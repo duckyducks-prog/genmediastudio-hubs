@@ -1,6 +1,7 @@
 import { logger } from "@/lib/logger";
 import { memo, useState, useEffect } from "react";
-import { Handle, Position, NodeProps, useReactFlow } from "reactflow";
+import { Position, NodeProps, useReactFlow } from "reactflow";
+import { ConnectedHandle } from './ConnectedHandle';
 import { Button } from "@/components/ui/button";
 import { ImageInputNodeData } from "../types";
 import { Upload, X, Image as ImageIcon, Loader2, FolderOpen } from "lucide-react";
@@ -171,7 +172,7 @@ function ImageUploadNode({ data, id }: NodeProps<ImageInputNodeData>) {
       {/* Node Header */}
       <div className="flex items-center justify-between mb-3 pb-2 border-b border-border">
         <div className="flex items-center gap-2">
-          <ImageIcon className="w-4 h-4 text-accent" />
+          <ImageIcon className="w-4 h-4 text-primary" />
           <div className="font-semibold text-sm">
             {data.label || "Image Upload"}
           </div>
@@ -270,7 +271,7 @@ function ImageUploadNode({ data, id }: NodeProps<ImageInputNodeData>) {
       <RunNodeButton nodeId={id} isExecuting={isExecuting} disabled={data.readOnly} />
 
       {/* Output Handle */}
-      <Handle
+      <ConnectedHandle
         type="source"
         position={Position.Right}
         id="image"

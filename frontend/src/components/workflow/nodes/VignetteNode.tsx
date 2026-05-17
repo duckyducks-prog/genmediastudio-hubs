@@ -1,5 +1,6 @@
 import { memo, useEffect, useCallback, useRef } from "react";
-import { Handle, Position, NodeProps } from "reactflow";
+import { Position, NodeProps } from "reactflow";
+import { ConnectedHandle } from './ConnectedHandle';
 import { VignetteNodeData } from "../types";
 import { ModifierSlider as Slider } from "@/components/ui/modifier-slider";
 import { Circle } from "lucide-react";
@@ -71,7 +72,7 @@ function VignetteNode({ data, id }: NodeProps<VignetteNodeData>) {
         </div>
       </div>
 
-      <Handle
+      <ConnectedHandle
         type="target"
         position={Position.Left}
         id="image"
@@ -79,7 +80,7 @@ function VignetteNode({ data, id }: NodeProps<VignetteNodeData>) {
         className="!w-3 !h-3 !border-2 !border-background"
         style={{ top: "20%" }}
       />
-      <Handle
+      <ConnectedHandle
         type="target"
         position={Position.Left}
         id="video"
@@ -87,7 +88,7 @@ function VignetteNode({ data, id }: NodeProps<VignetteNodeData>) {
         className="!w-3 !h-3 !border-2 !border-background"
         style={{ top: "40%" }}
       />
-      <Handle
+      <ConnectedHandle
         type="target"
         position={Position.Left}
         id="filters"
@@ -140,7 +141,7 @@ function VignetteNode({ data, id }: NodeProps<VignetteNodeData>) {
 
       <RunNodeButton nodeId={id} disabled={data.readOnly} />
 
-      <Handle
+      <ConnectedHandle
         type="source"
         position={Position.Right}
         id="image"
@@ -148,7 +149,7 @@ function VignetteNode({ data, id }: NodeProps<VignetteNodeData>) {
         className="!w-3 !h-3 !border-2 !border-background"
         style={{ top: "20%" }}
       />
-      <Handle
+      <ConnectedHandle
         type="source"
         position={Position.Right}
         id="video"
@@ -156,7 +157,7 @@ function VignetteNode({ data, id }: NodeProps<VignetteNodeData>) {
         className="!w-3 !h-3 !border-2 !border-background"
         style={{ top: "40%" }}
       />
-      <Handle
+      <ConnectedHandle
         type="source"
         position={Position.Right}
         id="filters"

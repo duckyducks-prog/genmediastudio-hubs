@@ -1,5 +1,6 @@
 import { memo, useMemo } from "react";
-import { Handle, Position, NodeProps, useEdges, useNodes } from "reactflow";
+import { Position, NodeProps, useEdges, useNodes } from "reactflow";
+import { ConnectedHandle } from './ConnectedHandle';
 import { Loader2, CheckCircle2, AlertCircle, Maximize2 } from "lucide-react";
 import { CompoundNodeData, NodeType } from "../types";
 import { RunNodeButton } from "./RunNodeButton";
@@ -103,7 +104,7 @@ function CompoundNode({ data, id }: NodeProps<CompoundNodeData>) {
             : 30 + (index / (inputHandles.length - 1)) * 40;
           return (
             <div key={input.id} className="relative">
-              <Handle
+              <ConnectedHandle
                 type="target"
                 position={Position.Left}
                 id={input.id}
@@ -148,7 +149,7 @@ function CompoundNode({ data, id }: NodeProps<CompoundNodeData>) {
           : 20 + (index / (outputHandles.length - 1)) * 60;
         return (
           <div key={output.id}>
-            <Handle
+            <ConnectedHandle
               type="source"
               position={Position.Right}
               id={output.id}

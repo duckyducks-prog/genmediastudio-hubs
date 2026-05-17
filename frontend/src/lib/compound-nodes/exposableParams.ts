@@ -263,6 +263,7 @@ export const EXPOSABLE_PARAMS: Record<NodeType, ExposableParam[]> = {
   // ============================================================================
 
   [NodeType.ExtractLastFrame]: [],
+  [NodeType.BurnCaptions]: [],
 
   // ============================================================================
   // OUTPUT/UTILITY NODES - No exposable params

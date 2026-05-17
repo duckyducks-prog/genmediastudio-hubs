@@ -1,6 +1,7 @@
 import { logger } from "@/lib/logger";
 import { useEffect, useState, useRef } from "react";
-import { Handle, Position, NodeProps, useReactFlow } from "reactflow";
+import { Position, NodeProps, useReactFlow } from "reactflow";
+import { ConnectedHandle } from './ConnectedHandle';
 import { ImageCompositeNodeData, NODE_CONFIGURATIONS, NodeType, WorkflowNode, WorkflowEdge } from "../types";
 import { Layers, Loader2 } from "lucide-react";
 import {
@@ -193,7 +194,7 @@ function ImageCompositeNode({ data, id }: NodeProps<ImageCompositeNodeData>) {
       <div className="space-y-3 mb-3">
         {config.inputConnectors.map((input) => (
           <div key={input.id} className="flex items-center gap-2 relative h-6">
-            <Handle
+            <ConnectedHandle
               type="target"
               position={Position.Left}
               id={input.id}
@@ -328,7 +329,7 @@ function ImageCompositeNode({ data, id }: NodeProps<ImageCompositeNodeData>) {
         <div className="text-xs font-medium text-muted-foreground">
           {config.outputConnectors[0].label}
         </div>
-        <Handle
+        <ConnectedHandle
           type="source"
           position={Position.Right}
           id={config.outputConnectors[0].id}

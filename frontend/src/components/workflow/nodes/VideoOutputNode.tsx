@@ -1,5 +1,6 @@
 import { memo, useState, useEffect, useRef } from "react";
-import { Handle, Position, NodeProps, useEdges, useNodes } from "reactflow";
+import { Position, NodeProps, useEdges, useNodes } from "reactflow";
+import { ConnectedHandle } from './ConnectedHandle';
 import { Button } from "@/components/ui/button";
 import { OutputNodeData, FilterConfig } from "../types";
 import { API_ENDPOINTS } from "@/lib/api-config";
@@ -183,7 +184,7 @@ function VideoOutputNode({ data, id }: NodeProps<OutputNodeData>) {
       </div>
 
       {/* Input Handles */}
-      <Handle
+      <ConnectedHandle
         type="target"
         position={Position.Left}
         id="video"
@@ -191,7 +192,7 @@ function VideoOutputNode({ data, id }: NodeProps<OutputNodeData>) {
         className="!w-3 !h-3 !border-2 !border-background"
         style={{ top: "40%", transform: "translateY(-50%)" }}
       />
-      <Handle
+      <ConnectedHandle
         type="target"
         position={Position.Left}
         id="filters"
@@ -244,7 +245,7 @@ function VideoOutputNode({ data, id }: NodeProps<OutputNodeData>) {
       <RunNodeButton nodeId={id} disabled={data.readOnly} isExecuting={isExecuting} />
 
       {/* Output Handle for chaining */}
-      <Handle
+      <ConnectedHandle
         type="source"
         position={Position.Right}
         id="media-output"
