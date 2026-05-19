@@ -32,6 +32,61 @@ interface RecentAsset {
   created_at: string;
 }
 
+interface SessionResult {
+  type: "image" | "video";
+  url: string;
+  key: number;
+  prompt: string;
+  aspectRatio: string;
+  createdAt: Date;
+  batchId: number;
+}
+
+type LayoutMode = "feed" | "mosaic" | "hero";
+
+function parseAspectRatio(ratio: string): number {
+  const [w, h] = ratio.split(/[:/]/).map(Number);
+  return w && h ? w / h : 1;
+}
+
+function formatRelativeTime(date: Date): string {
+  const secs = Math.floor((Date.now() - date.getTime()) / 1000);
+  if (secs < 60) return "Just now";
+  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
+  return `${Math.floor(secs / 3600)}h ago`;
+}
+
+function GenCard({
+  result,
+  isNew,
+  style,
+  onUseRef,
+  onWorkflow,
+}: {
+  result: SessionResult;
+  isNew: boolean;
+  style?: React.CSSProperties;
+  onUseRef: () => void;
+  onWorkflow: () => void;
+}) {
+  return (
+    <div className={`gen-card${isNew ? " fresh-glow" : ""}`} style={style}>
+      {result.type === "image"
+        ? <img src={result.url} className="gen-card-img" alt="" />
+        : <video src={result.url} controls className="gen-card-img" />}
+      <span className="gen-card-type">{result.type === "image" ? "IMG" : "VID"}</span>
+      <div className="result-actions">
+        <button className="result-action-btn" onClick={onUseRef} title="Use as reference">
+          <Pencil className="w-2.5 h-2.5" />
+        </button>
+        <button className="result-action-btn" onClick={onWorkflow} title="Open in workflow">
+          <WorkflowIcon className="w-2.5 h-2.5" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 const SUGGESTION_CHIPS = [
   { icon: <Camera className="w-3.5 h-3.5" />, label: "Product shot", starter: "Product shot of [your product] on a clean white surface, studio lighting" },
   { icon: <User className="w-3.5 h-3.5" />, label: "Character", starter: "Cinematic portrait of a character, " },
@@ -83,7 +138,6 @@ export function CreateView({ onLibraryRefresh }: CreateViewProps) {
   const lastFrameRef = useRef<HTMLInputElement>(null);
   const [generationError, setGenerationError] = useState<string | null>(null);
   const [newestResultKey, setNewestResultKey] = useState<number | null>(null);
-  const [results, setResults] = useState<Array<{ type: "image" | "video"; url: string; key: number }>>([]);
   const [recentAssets, setRecentAssets] = useState<RecentAsset[]>([]);
   // Passive save-to chip — never blocks generate
   const [saveToFolder, setSaveToFolder] = useState<{ id: string | null; name: string }>({ id: null, name: "General" });
@@ -93,10 +147,14 @@ export function CreateView({ onLibraryRefresh }: CreateViewProps) {
   const [folderList, setFolderList] = useState<Array<{ id: string; name: string }>>([]);
   const abortControllerRef = useRef<AbortController | null>(null);
   const resultKeyRef = useRef(0);
+  const batchIdRef = useRef(0);
+  const currentGenMetaRef = useRef({ batchId: 0, prompt: "", aspectRatio: "1:1" });
 
   // New state variables
   const [variations, setVariations] = useState(1);
   const [showVariationsMenu, setShowVariationsMenu] = useState(false);
+  const [sessionResults, setSessionResults] = useState<SessionResult[]>([]);
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>("feed");
   const [promptPersisted, setPromptPersisted] = useState(false);
   const [promptFocused, setPromptFocused] = useState(false);
   const [viewState, setViewState] = useState<"idle" | "generating" | "result" | "error">("idle");
@@ -176,7 +234,14 @@ export function CreateView({ onLibraryRefresh }: CreateViewProps) {
 
   const addResult = (type: "image" | "video", url: string) => {
     const key = ++resultKeyRef.current;
-    setResults((p) => [{ type, url, key }, ...p]);
+    const meta = currentGenMetaRef.current;
+    setSessionResults((p) => [{
+      type, url, key,
+      prompt: meta.prompt,
+      aspectRatio: meta.aspectRatio,
+      createdAt: new Date(),
+      batchId: meta.batchId,
+    }, ...p]);
     setNewestResultKey(key);
     setViewState("result");
     setTimeout(() => setNewestResultKey(null), 5500);
@@ -204,6 +269,8 @@ export function CreateView({ onLibraryRefresh }: CreateViewProps) {
     if (!prompt.trim() || isGenerating) return;
     const controller = new AbortController();
     abortControllerRef.current = controller;
+    batchIdRef.current++;
+    currentGenMetaRef.current = { batchId: batchIdRef.current, prompt, aspectRatio };
     setViewState("generating");
     setPromptPersisted(false);
     setGenerationError(null);
@@ -341,43 +408,165 @@ export function CreateView({ onLibraryRefresh }: CreateViewProps) {
         ))}
       </p>
 
-      {/* Top slot — shows animation when generating, result when done, nothing when idle */}
-      {(viewState !== "idle" || results.length > 0) && (
-        <div className="top-slot">
-          <div className="top-slot-frame">
-            {viewState === "generating" && <GeneratingAnimation mode={mode} />}
-            {viewState === "result" && results.length > 0 && (
-              <div className={`result-grid ${["", "single", "double", "triple", "quad"][Math.min(results.length, variations)]}`}>
-                {results.slice(0, variations).map((r) => (
-                  <div key={r.key} className={`result-tile ${newestResultKey === r.key || newestResultKey === null ? "fresh-glow" : ""}`}>
-                    {r.type === "image"
-                      ? <img src={r.url} className="result-tile-img" alt="" />
-                      : <video src={r.url} controls className="result-tile-img" />}
-                    <div className="result-actions">
-                      <button className="result-action-btn" onClick={() => setReferenceImages(p => [...p, r.url])} title="Use as reference">
-                        <Pencil className="w-2.5 h-2.5" />
-                      </button>
-                      <button className="result-action-btn" onClick={() => window.dispatchEvent(new CustomEvent("add-image-to-new-workflow", { detail: { url: r.url } }))} title="Open in workflow">
-                        <WorkflowIcon className="w-2.5 h-2.5" />
-                      </button>
+      {/* Session results area — replaces the old fixed top-slot */}
+      {(viewState !== "idle" || sessionResults.length > 0) && (
+        <div className="session-area">
+
+          {/* Header: count + layout toggle + clear */}
+          {sessionResults.length > 0 && (
+            <div className="session-header">
+              <span className="session-count">◎ {sessionResults.length} generation{sessionResults.length !== 1 ? "s" : ""} this session</span>
+              <div className="layout-picker">
+                {(["feed", "mosaic", "hero"] as const).map((m) => (
+                  <button
+                    key={m}
+                    className={`layout-pick-btn${layoutMode === m ? " active" : ""}`}
+                    onClick={() => setLayoutMode(m)}
+                    title={m === "feed" ? "Grouped by prompt" : m === "mosaic" ? "Masonry grid" : "Hero + history"}
+                  >
+                    {m === "feed" ? "A · Feed" : m === "mosaic" ? "B · Grid" : "C · Hero"}
+                  </button>
+                ))}
+              </div>
+              <button
+                className="session-clear-btn"
+                onClick={() => { setSessionResults([]); setViewState("idle"); }}
+              >
+                Clear
+              </button>
+            </div>
+          )}
+
+          {/* Generating animation */}
+          {viewState === "generating" && (
+            <div className="top-slot-frame gen-pending">
+              <GeneratingAnimation mode={mode} />
+            </div>
+          )}
+
+          {/* Error tile */}
+          {viewState === "error" && (
+            <div className="error-tile" style={{ margin: "0 0 16px" }}>
+              <span style={{ fontSize: 24 }}>⚠</span>
+              <p style={{ margin: 0, fontSize: 13 }}>Generation failed</p>
+              <button
+                onClick={() => { setViewState("idle"); setGenerationError(null); }}
+                style={{ background: "rgba(255,72,0,0.15)", border: "1px solid rgba(255,72,0,0.3)", color: "#FF4800", padding: "6px 14px", borderRadius: 999, fontSize: 12, cursor: "pointer" }}
+              >
+                Try again
+              </button>
+            </div>
+          )}
+
+          {/* ── Option A: Feed — grouped by generation batch ──────── */}
+          {sessionResults.length > 0 && layoutMode === "feed" && (
+            <div className="session-layout-feed">
+              {Array.from(
+                sessionResults.reduce((map, r) => {
+                  if (!map.has(r.batchId)) map.set(r.batchId, [] as SessionResult[]);
+                  map.get(r.batchId)!.push(r);
+                  return map;
+                }, new Map<number, SessionResult[]>())
+              )
+                .sort(([a], [b]) => b - a)
+                .map(([batchId, cards]) => (
+                  <div key={batchId} className="batch-group">
+                    <div className="batch-label">
+                      <span className="batch-type-badge">{cards[0].type === "image" ? "IMG" : "VID"}</span>
+                      <span className="batch-prompt">
+                        {cards[0].prompt.slice(0, 72)}{cards[0].prompt.length > 72 ? "…" : ""}
+                      </span>
+                      <span className="batch-meta">{cards[0].aspectRatio} · {formatRelativeTime(cards[0].createdAt)}</span>
+                    </div>
+                    <div className="batch-cards">
+                      {cards.map((card) => (
+                        <GenCard
+                          key={card.key}
+                          result={card}
+                          isNew={newestResultKey === card.key}
+                          style={{
+                            height: 220,
+                            width: Math.round(220 * parseAspectRatio(card.aspectRatio)),
+                            maxWidth: "100%",
+                          }}
+                          onUseRef={() => setReferenceImages((p) => [...p, card.url])}
+                          onWorkflow={() => window.dispatchEvent(new CustomEvent("add-image-to-new-workflow", { detail: { url: card.url } }))}
+                        />
+                      ))}
                     </div>
                   </div>
                 ))}
+            </div>
+          )}
+
+          {/* ── Option B: Masonry — CSS columns, aspect ratios flow naturally ── */}
+          {sessionResults.length > 0 && layoutMode === "mosaic" && (
+            <div className="session-layout-mosaic">
+              {sessionResults.map((card) => (
+                <GenCard
+                  key={card.key}
+                  result={card}
+                  isNew={newestResultKey === card.key}
+                  style={{ aspectRatio: card.aspectRatio.replace(":", " / "), width: "100%", marginBottom: 8, display: "block" }}
+                  onUseRef={() => setReferenceImages((p) => [...p, card.url])}
+                  onWorkflow={() => window.dispatchEvent(new CustomEvent("add-image-to-new-workflow", { detail: { url: card.url } }))}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* ── Option C: Hero — latest batch featured, previous in a strip ── */}
+          {sessionResults.length > 0 && layoutMode === "hero" && (() => {
+            const latestBatchId = Math.max(...sessionResults.map((r) => r.batchId));
+            const heroCards = sessionResults.filter((r) => r.batchId === latestBatchId);
+            const historyCards = sessionResults.filter((r) => r.batchId !== latestBatchId);
+            return (
+              <div className="session-layout-hero">
+                <div className="batch-label" style={{ marginBottom: 8 }}>
+                  <span className="batch-type-badge">{heroCards[0].type === "image" ? "IMG" : "VID"}</span>
+                  <span className="batch-prompt">
+                    {heroCards[0].prompt.slice(0, 72)}{heroCards[0].prompt.length > 72 ? "…" : ""}
+                  </span>
+                  <span className="batch-meta">{heroCards[0].aspectRatio} · {formatRelativeTime(heroCards[0].createdAt)}</span>
+                </div>
+                <div className="hero-card-row">
+                  {heroCards.map((card) => (
+                    <GenCard
+                      key={card.key}
+                      result={card}
+                      isNew={newestResultKey === card.key}
+                      style={{
+                        flex: 1,
+                        aspectRatio: card.aspectRatio.replace(":", " / "),
+                        maxHeight: 340,
+                        minWidth: 0,
+                      }}
+                      onUseRef={() => setReferenceImages((p) => [...p, card.url])}
+                      onWorkflow={() => window.dispatchEvent(new CustomEvent("add-image-to-new-workflow", { detail: { url: card.url } }))}
+                    />
+                  ))}
+                </div>
+                {historyCards.length > 0 && (
+                  <>
+                    <p className="history-label">Previous</p>
+                    <div className="history-strip">
+                      {historyCards.map((card) => (
+                        <GenCard
+                          key={card.key}
+                          result={card}
+                          isNew={false}
+                          style={{ aspectRatio: "1 / 1", width: "100%" }}
+                          onUseRef={() => setReferenceImages((p) => [...p, card.url])}
+                          onWorkflow={() => window.dispatchEvent(new CustomEvent("add-image-to-new-workflow", { detail: { url: card.url } }))}
+                        />
+                      ))}
+                    </div>
+                  </>
+                )}
               </div>
-            )}
-            {viewState === "error" && (
-              <div className="error-tile">
-                <span style={{ fontSize: 24 }}>⚠</span>
-                <p style={{ margin: 0, fontSize: 13 }}>Generation failed</p>
-                <button
-                  onClick={() => { setViewState("idle"); setGenerationError(null); }}
-                  style={{ background: "rgba(255,72,0,0.15)", border: "1px solid rgba(255,72,0,0.3)", color: "#FF4800", padding: "6px 14px", borderRadius: 999, fontSize: 12, cursor: "pointer" }}
-                >
-                  Try again
-                </button>
-              </div>
-            )}
-          </div>
+            );
+          })()}
+
         </div>
       )}
 
