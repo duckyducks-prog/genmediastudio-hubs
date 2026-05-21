@@ -33,7 +33,7 @@ export function GeneratingAnimation({ mode: _mode }: GeneratingAnimationProps) {
   }, []);
 
   return (
-    <div className="ratio-stage" style={{ position: "absolute", top: 25, left: "50%", transform: "translateX(-50%)", width: 240, height: 170 }}>
+    <div className="ratio-stage" style={{ position: "relative", width: 240, height: 170 }}>
       {Array.from({ length: 16 }, (_, i) => i + 1).map((n) => (
         <div
           key={n}

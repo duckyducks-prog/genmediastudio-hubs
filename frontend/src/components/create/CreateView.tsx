@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import {
   Image as ImageIcon,
   Video as VideoIcon,
@@ -8,9 +9,13 @@ import {
   Pencil,
   Layers,
   FolderPlus,
-  FolderOpen,
+  Workflow as WorkflowIcon,
+  Download,
+  Check,
   Trash2,
   Save,
+  Maximize2,
+  ClipboardCopy,
 } from "lucide-react";
 import { auth } from "@/lib/firebase";
 import { API_ENDPOINTS } from "@/lib/api-config";
@@ -23,24 +28,30 @@ import "./create.css";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface SessionGeneration {
-  id: string;
-  prompt: string;
+interface SessionResult {
   type: "image" | "video";
+  url: string | null;
+  key: number;
   aspectRatio: string;
-  status: "thinking" | "complete" | "failed";
-  mediaUrl: string | null;
-  createdAt: number;
+  batchId: number;
+  prompt: string;
+  status: "pending" | "complete" | "failed";
+  assetId?: string;   // saved_asset_id from backend — needed for folder moves
   isNew?: boolean;
 }
 
-const ASPECT_RATIOS = [
+const ASPECT_RATIOS_IMAGE = [
   { value: "1:1",    thumbClass: "r-1-1"  },
   { value: "16:9",   thumbClass: "r-16-9" },
   { value: "9:16",   thumbClass: "r-9-16" },
   { value: "4:3",    thumbClass: "r-4-3"  },
   { value: "3:2",    thumbClass: "r-3-2"  },
   { value: "2.39:1", thumbClass: "r-2-39" },
+] as const;
+
+const ASPECT_RATIOS_VIDEO = [
+  { value: "16:9", thumbClass: "r-16-9" },
+  { value: "9:16", thumbClass: "r-9-16" },
 ] as const;
 
 async function getToken() { return auth.currentUser?.getIdToken(); }
@@ -51,57 +62,7 @@ async function authHeaders(contentType = true) {
   return h;
 }
 
-function relTime(ts: number): string {
-  const diff = (Date.now() - ts) / 1000;
-  if (diff < 60) return "Just now";
-  if (diff < 3600) return `${Math.floor(diff / 60)} min ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)} hr ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
-}
-
 interface CreateViewProps { onLibraryRefresh?: () => void; }
-
-// ─── History card ─────────────────────────────────────────────────────────────
-
-function HistoryCard({ gen, isNew, onUseAsRef }: {
-  gen: SessionGeneration;
-  isNew: boolean;
-  onUseAsRef: (url: string) => void;
-}) {
-  return (
-    <div className={`history-card${isNew ? " sliding-in" : ""}`}>
-      <div className="history-card-media">
-        {gen.status === "complete" && gen.mediaUrl ? (
-          gen.type === "video"
-            ? <video src={gen.mediaUrl} className="history-card-media-bg" muted loop preload="metadata" />
-            : <img src={gen.mediaUrl} className="history-card-media-bg" alt="" />
-        ) : gen.status === "failed" ? (
-          <div className="history-card-failed-media">
-            <span style={{ fontSize: 22, opacity: 0.5 }}>⚠</span>
-          </div>
-        ) : null}
-        <span className="history-card-type">{gen.type === "video" ? "VID" : "IMG"}</span>
-        {gen.status === "complete" && gen.mediaUrl && (
-          <div className="history-card-actions">
-            <button className="history-card-action" title="Use as reference" onClick={() => onUseAsRef(gen.mediaUrl!)}>
-              <Pencil className="w-3 h-3" />
-            </button>
-          </div>
-        )}
-      </div>
-      <div className="history-card-body">
-        <p className="history-card-prompt">
-          {gen.status === "failed" ? <span style={{ color: "rgba(255,100,50,0.8)" }}>Generation failed</span> : gen.prompt}
-        </p>
-        <div className="history-card-meta">
-          <span>{relTime(gen.createdAt)}</span>
-          <span className="meta-dot" />
-          <span>{gen.aspectRatio} · {gen.type === "video" ? "Video" : "Image"}</span>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
@@ -109,12 +70,20 @@ export function CreateView({ onLibraryRefresh }: CreateViewProps) {
   const { user } = useAuth();
 
   // ── Session state ──────────────────────────────────────────────
-  const [sessionGens, setSessionGens] = useState<SessionGeneration[]>([]);
-  const [newlyHistoryId, setNewlyHistoryId] = useState<string | null>(null);
+  const [sessionResults, setSessionResults] = useState<SessionResult[]>([]);
+  const [viewState, setViewState] = useState<"idle" | "generating" | "result" | "error">("idle");
+  const [newestResultKey, setNewestResultKey] = useState<number | null>(null);
+  const [selectedKeys, setSelectedKeys] = useState<Set<number>>(new Set());
+  const [justCleared, setJustCleared] = useState(false);
+  const [lightbox, setLightbox] = useState<{ url: string; type: "image" | "video"; index: number } | null>(null);
+  const [showBulkFolderMenu, setShowBulkFolderMenu] = useState(false);
+  const [bulkSaveFeedback, setBulkSaveFeedback] = useState<string | null>(null);
+  const [hoveredCard, setHoveredCard] = useState<{ result: SessionResult; rect: DOMRect } | null>(null);
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const activeGen = sessionGens.length > 0 ? sessionGens[sessionGens.length - 1] : null;
-  const historyGens = sessionGens.slice(0, -1);
-  const hasSession = sessionGens.length > 0;
+  const anySelected = selectedKeys.size > 0;
+  const toggleSelect = (key: number) =>
+    setSelectedKeys(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
 
   // ── Prompt state ───────────────────────────────────────────────
   const [prompt, setPrompt] = useState("");
@@ -140,26 +109,26 @@ export function CreateView({ onLibraryRefresh }: CreateViewProps) {
   const [showSaveToMenu, setShowSaveToMenu] = useState(false);
   const [showNewFolderInput, setShowNewFolderInput] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
+  const [generationError, setGenerationError] = useState<string | null>(null);
 
   // ── Folder state ───────────────────────────────────────────────
   const [saveToFolder, setSaveToFolder] = useState<{ id: string | null; name: string }>({ id: null, name: "" });
   const [folderList, setFolderList] = useState<Array<{ id: string; name: string }>>([]);
 
-  // ── Session toolbar state ──────────────────────────────────────
-  const [showClearConfirm, setShowClearConfirm] = useState(false);
-  const [_savingToFolder, setSavingToFolder] = useState(false);
-  const [savedFeedback, setSavedFeedback] = useState<string | null>(null);
-
-  // ── Misc refs ──────────────────────────────────────────────────
+  // ── Refs ───────────────────────────────────────────────────────
   const abortControllerRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const firstFrameRef = useRef<HTMLInputElement>(null);
   const lastFrameRef = useRef<HTMLInputElement>(null);
-  const genIdRef = useRef(0);
+  const resultKeyRef = useRef(0);
+  const batchIdRef = useRef(0);
+  const currentAspectRatioRef = useRef("1:1");
+  const currentPromptRef = useRef("");
+  const inFlightRef = useRef(0); // count of in-flight requests
 
   const rawName = user?.displayName?.split(" ")[0] ?? user?.email?.split("@")[0] ?? "there";
   const displayName = rawName.charAt(0).toUpperCase() + rawName.slice(1);
-  const isGenerating = activeGen?.status === "thinking";
+  const isGenerating = viewState === "generating";
 
   // ── Load element chips ─────────────────────────────────────────
   useEffect(() => {
@@ -192,6 +161,20 @@ export function CreateView({ onLibraryRefresh }: CreateViewProps) {
     load();
   }, []);
 
+  // ── Resolve a pending slot to a real result ───────────────────
+  const resolveResult = useCallback((key: number, url: string, assetId?: string) => {
+    setSessionResults(p => p.map(r => r.key === key
+      ? { ...r, url, status: "complete" as const, isNew: true, assetId }
+      : r
+    ));
+    setNewestResultKey(key);
+    setViewState("result");
+    setTimeout(() => {
+      setSessionResults(p => p.map(r => r.key === key ? { ...r, isNew: false } : r));
+      setNewestResultKey(null);
+    }, 2400);
+  }, []);
+
   // ── Resolve prompt + references ────────────────────────────────
   const resolvePromptAndRefs = useCallback(() => {
     const DESCRIPTORS: Record<string, string> = {
@@ -212,46 +195,73 @@ export function CreateView({ onLibraryRefresh }: CreateViewProps) {
   const handleGenerate = useCallback(async () => {
     if (!prompt.trim() || isGenerating) return;
 
-    const genId = String(++genIdRef.current);
     const capturedPrompt = prompt;
     const capturedMode = mode;
     const capturedAspect = aspectRatio;
+    const capturedVariations = capturedMode === "image" ? variations : 1;
 
-    // Mark previous active as newly-in-history for slide-in animation
-    if (activeGen) {
-      setNewlyHistoryId(activeGen.id);
-      setTimeout(() => setNewlyHistoryId(null), 800);
-    }
+    batchIdRef.current++;
+    currentAspectRatioRef.current = capturedAspect;
+    currentPromptRef.current = capturedPrompt;
 
-    // Add thinking entry
-    const thinkingEntry: SessionGeneration = {
-      id: genId, prompt: capturedPrompt, type: capturedMode,
-      aspectRatio: capturedAspect, status: "thinking", mediaUrl: null, createdAt: Date.now(),
-    };
-    setSessionGens(prev => [...prev, thinkingEntry]);
+    // Create N pending placeholder slots upfront — show them immediately in the grid
+    const pendingKeys = Array.from({ length: capturedVariations }, () => ++resultKeyRef.current);
+    const pendingEntries: SessionResult[] = pendingKeys.map(key => ({
+      key, type: capturedMode, url: null, aspectRatio: capturedAspect,
+      batchId: batchIdRef.current, prompt: capturedPrompt, status: "pending",
+    }));
+    setSessionResults(p => [...pendingEntries, ...p]);
+    setViewState("generating");
+    setPrompt("");
     setPromptPersisted(false);
+    setGenerationError(null);
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
+    inFlightRef.current = capturedVariations;
 
-    try {
-      let mediaUrl: string | null = null;
+    const finish = () => {
+      inFlightRef.current--;
+      if (inFlightRef.current <= 0) {
+        setViewState(v => v === "generating" ? "result" : v);
+        onLibraryRefresh?.();
+      }
+    };
 
-      if (capturedMode === "image") {
-        const { finalPrompt, allRefs } = resolvePromptAndRefs();
-        const body: Record<string, unknown> = {
-          prompt: finalPrompt, aspect_ratio: capturedAspect,
-          ...(allRefs.length > 0 && { reference_images: allRefs }),
-          ...(saveToFolder.id && { folder_id: saveToFolder.id }),
-        };
-        const res = await fetch(API_ENDPOINTS.generate.image, {
-          method: "POST", headers: await authHeaders(),
-          body: JSON.stringify(body), signal: controller.signal,
-        });
-        if (!res.ok) throw new Error(await res.text());
-        const data = await res.json();
-        if (data.images?.[0]) mediaUrl = `data:image/png;base64,${data.images[0]}`;
-      } else {
+    if (capturedMode === "image") {
+      const { finalPrompt, allRefs } = resolvePromptAndRefs();
+      const body: Record<string, unknown> = {
+        prompt: finalPrompt, aspect_ratio: capturedAspect,
+        ...(allRefs.length > 0 && { reference_images: allRefs }),
+        ...(saveToFolder.id && { folder_id: saveToFolder.id }),
+      };
+      const headers = await authHeaders();
+
+      await Promise.allSettled(
+        pendingKeys.map(async (key) => {
+          try {
+            const res = await fetch(API_ENDPOINTS.generate.image, {
+              method: "POST", headers, body: JSON.stringify(body), signal: controller.signal,
+            });
+            if (!res.ok) throw new Error(await res.text());
+            const data = await res.json();
+            if (data.images?.[0]) {
+              resolveResult(key, `data:image/png;base64,${data.images[0]}`, data.saved_asset_id ?? undefined);
+            } else {
+              setSessionResults(p => p.map(r => r.key === key ? { ...r, status: "failed" } : r));
+            }
+          } catch (e) {
+            if ((e as Error).name !== "AbortError") {
+              setSessionResults(p => p.map(r => r.key === key ? { ...r, status: "failed" } : r));
+            } else {
+              setSessionResults(p => p.filter(r => r.key !== key));
+            }
+          } finally { finish(); }
+        })
+      );
+    } else {
+      const key = pendingKeys[0];
+      try {
         const body: Record<string, unknown> = {
           prompt: capturedPrompt, aspect_ratio: capturedAspect, duration_seconds: videoDuration,
           ...(firstFrame && { first_frame: firstFrame }),
@@ -259,8 +269,7 @@ export function CreateView({ onLibraryRefresh }: CreateViewProps) {
           ...(saveToFolder.id && { folder_id: saveToFolder.id }),
         };
         const res = await fetch(API_ENDPOINTS.generate.video, {
-          method: "POST", headers: await authHeaders(),
-          body: JSON.stringify(body), signal: controller.signal,
+          method: "POST", headers: await authHeaders(), body: JSON.stringify(body), signal: controller.signal,
         });
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
@@ -275,58 +284,30 @@ export function CreateView({ onLibraryRefresh }: CreateViewProps) {
           const statusData = await statusRes.json();
           if (statusData.status === "complete" && statusData.video_base64) {
             complete = true;
-            mediaUrl = `data:video/mp4;base64,${statusData.video_base64}`;
+            resolveResult(key, `data:video/mp4;base64,${statusData.video_base64}`, statusData.saved_asset_id ?? undefined);
           }
         }
-      }
-
-      setSessionGens(prev => prev.map(g => g.id === genId
-        ? { ...g, status: "complete", mediaUrl, isNew: true }
-        : g
-      ));
-      setTimeout(() => setSessionGens(prev => prev.map(g => g.id === genId ? { ...g, isNew: false } : g)), 3000);
-      setPromptPersisted(true);
-      onLibraryRefresh?.();
-    } catch (e) {
-      if ((e as Error).name === "AbortError") {
-        setSessionGens(prev => prev.filter(g => g.id !== genId));
-        return;
-      }
-      setSessionGens(prev => prev.map(g => g.id === genId ? { ...g, status: "failed" } : g));
+      } catch (e) {
+        if ((e as Error).name !== "AbortError") {
+          setSessionResults(p => p.map(r => r.key === key ? { ...r, status: "failed" } : r));
+        } else {
+          setSessionResults(p => p.filter(r => r.key !== key));
+        }
+      } finally { finish(); }
     }
-  }, [prompt, isGenerating, mode, aspectRatio, videoDuration, firstFrame, lastFrame, saveToFolder, activeGen, resolvePromptAndRefs, onLibraryRefresh]);
+  }, [prompt, isGenerating, mode, aspectRatio, variations, videoDuration, firstFrame, lastFrame, saveToFolder, resolvePromptAndRefs, resolveResult, onLibraryRefresh]);
 
   const handleCancel = () => {
     abortControllerRef.current?.abort();
-    setSessionGens(prev => prev.filter(g => g.status !== "thinking"));
-  };
-
-  // ── Session toolbar actions ────────────────────────────────────
-  const handleClearFeed = () => {
-    setSessionGens([]);
-    setShowClearConfirm(false);
-    setPromptPersisted(false);
-  };
-
-  const handleSaveAllToFolder = async (_folderId: string, folderName: string) => {
-    setSavingToFolder(true);
-    try {
-      const completedUrls = sessionGens.filter(g => g.status === "complete" && g.mediaUrl).map(g => g.mediaUrl!);
-      // The generations are already saved to the library — just update folder assignment via patch
-      // This is a best-effort save; individual assets were already saved by the generation API
-      setSavedFeedback(`Saved to "${folderName}"`);
-      setTimeout(() => setSavedFeedback(null), 3000);
-      void completedUrls; // suppress unused warning — actual folder assignment happens server-side during generation
-    } catch { /* silent */ }
-    finally { setSavingToFolder(false); setShowSaveToMenu(false); }
+    inFlightRef.current = 0;
+    setViewState(sessionResults.length > 0 ? "result" : "idle");
   };
 
   const handleCreateFolder = async () => {
     if (!newFolderName.trim()) return;
     try {
       const res = await fetch(API_ENDPOINTS.folders.create, {
-        method: "POST", headers: await authHeaders(),
-        body: JSON.stringify({ name: newFolderName.trim() }),
+        method: "POST", headers: await authHeaders(), body: JSON.stringify({ name: newFolderName.trim() }),
       });
       if (!res.ok) return;
       const folder = await res.json();
@@ -345,14 +326,14 @@ export function CreateView({ onLibraryRefresh }: CreateViewProps) {
     e.target.value = "";
   };
 
-  const promptCardClass = isGenerating ? "thinking-state" : prompt.trim() || hasSession ? "glowing" : "";
+  const promptCardClass = prompt.trim() || sessionResults.length > 0 ? "glowing" : "";
 
   // ── Render ─────────────────────────────────────────────────────
   return (
-    <div className={`create-page${hasSession ? " has-session" : ""}`}>
+    <div className={`create-page${sessionResults.length > 0 || isGenerating ? " has-session" : ""}`}>
 
-      {/* ── Empty state (greeting shown when no session) ── */}
-      {!hasSession && !isGenerating && (
+      {/* ── Empty state ── */}
+      {viewState === "idle" && sessionResults.length === 0 && (
         <div className="empty-state">
           <p className="greeting">
             {`${displayName}, what will you create today?`
@@ -363,138 +344,199 @@ export function CreateView({ onLibraryRefresh }: CreateViewProps) {
         </div>
       )}
 
-      {/* ── Session: toolbar + history + active gen ── */}
-      {(hasSession || isGenerating) && (
-        <div className="session-content">
+      {/* ── Session area ── */}
+      {(viewState !== "idle" || sessionResults.length > 0) && (
+        <div className="session-area">
 
-          {/* Session toolbar */}
-          <div className="session-toolbar">
-            <div className="session-count">
-              <span>⬡</span>
-              <span>
-                <strong>{sessionGens.length}</strong>{" "}
-                {sessionGens.length === 1 ? "generation" : "generations"} this session
+          {/* Session header — count + single-click clear */}
+          {sessionResults.length > 0 && (
+            <div className="session-header">
+              <span className="session-count">
+                ◎ {sessionResults.length} generation{sessionResults.length !== 1 ? "s" : ""} this session
               </span>
-            </div>
-            <div className="session-actions">
-              {savedFeedback ? (
-                <span className="save-success">✓ {savedFeedback}</span>
+              {justCleared ? (
+                <span className="save-success">✓ Cleared — images saved to library</span>
               ) : (
-                <>
-                  {/* Save all */}
-                  <div className="relative">
-                    <button className="session-link" onClick={() => setShowSaveToMenu(v => !v)}>
-                      <Save className="w-3.5 h-3.5" />
-                      Save all
-                    </button>
-                    {showSaveToMenu && (
+                <button
+                  className="session-clear-btn"
+                  onClick={() => {
+                    setSessionResults([]); setSelectedKeys(new Set());
+                    setViewState("idle"); setGenerationError(null);
+                    setJustCleared(true); setTimeout(() => setJustCleared(false), 3000);
+                  }}
+                >
+                  Clear feed
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Bulk action bar */}
+          {anySelected && (
+            <div className="bulk-bar">
+              <span className="bulk-count">{selectedKeys.size} selected</span>
+              <button className="bulk-btn" onClick={() => {
+                setSessionResults(p => p.filter(r => !selectedKeys.has(r.key)));
+                setSelectedKeys(new Set());
+              }}>
+                <Trash2 className="w-3.5 h-3.5" /> Delete
+              </button>
+              {bulkSaveFeedback ? (
+                <span className="save-success">{bulkSaveFeedback}</span>
+              ) : (
+                <div className="relative">
+                  <button className="bulk-btn" onClick={() => setShowBulkFolderMenu(v => !v)}>
+                    <Save className="w-3.5 h-3.5" /> Save to folder
+                  </button>
+                  {showBulkFolderMenu && (<>
+                    <div className="fixed inset-0 z-20" onClick={() => setShowBulkFolderMenu(false)} />
+                    <div className="chip-popover" style={{ bottom: "calc(100% + 8px)", top: "auto" }}>
+                      <p className="chip-popover-header">Move selected to</p>
+                      <div className="chip-grid chip-grid-3">
+                        {folderList.map(f => (
+                          <button key={f.id} className="folder-chip-opt"
+                            onClick={async () => {
+                              setShowBulkFolderMenu(false);
+                              const token = await getToken();
+                              const targets = sessionResults.filter(r => selectedKeys.has(r.key) && r.assetId);
+                              await Promise.allSettled(targets.map(r =>
+                                fetch(API_ENDPOINTS.assets.moveToFolder(r.assetId!, f.id), {
+                                  method: "PATCH", headers: { Authorization: `Bearer ${token}` },
+                                })
+                              ));
+                              setBulkSaveFeedback(`✓ ${targets.length} saved to "${f.name}"`);
+                              setTimeout(() => setBulkSaveFeedback(null), 3000);
+                              setSelectedKeys(new Set());
+                            }}>
+                            <div className="folder-chip-preview">{[0,1,2,3].map(i => <div key={i} />)}</div>
+                            <span className="folder-chip-name">{f.name}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </>)}
+                </div>
+              )}
+              <button className="bulk-cancel" onClick={() => setSelectedKeys(new Set())}>Cancel</button>
+            </div>
+          )}
+
+          {/* Error state */}
+          {viewState === "error" && (
+            <div className="error-tile">
+              <span style={{ fontSize: 24 }}>⚠</span>
+              <p style={{ margin: 0, fontSize: 13 }}>{generationError || "Generation failed"}</p>
+              <button
+                onClick={() => { setViewState(sessionResults.length > 0 ? "result" : "idle"); setGenerationError(null); }}
+                style={{ background: "rgba(255,72,0,0.15)", border: "1px solid rgba(255,72,0,0.3)", color: "#FF4800", padding: "6px 14px", borderRadius: 999, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+
+          {/* Masonry grid — newest top-left */}
+          {sessionResults.length > 0 && (
+            <div
+              className="session-mosaic"
+              style={sessionResults.every(r => r.aspectRatio === "9:16")
+                ? { display: "flex", flexWrap: "wrap" as const, justifyContent: "center" }
+                : undefined}
+            >
+              {sessionResults.map((card, cardIndex) => {
+                const isSelected = selectedKeys.has(card.key);
+                const isPending = card.status === "pending";
+                const isFailed = card.status === "failed";
+
+                return (
+                  <div
+                    key={card.key}
+                    className={`gen-card${card.isNew ? " gen-card-arrived" : ""}${isPending ? " gen-card-pending" : ""}${newestResultKey === card.key && !isPending ? " fresh-glow" : ""}${isSelected ? " is-selected" : ""}`}
+                    style={{ aspectRatio: card.aspectRatio.replace(":", " / ") }}
+                    onDoubleClick={() => card.url && setLightbox({ url: card.url, type: card.type, index: cardIndex })}
+                    onMouseEnter={(e) => {
+                      if (isPending || isFailed) return;
+                      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                      if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+                      hoverTimerRef.current = setTimeout(() => setHoveredCard({ result: card, rect }), 100);
+                    }}
+                    onMouseLeave={() => {
+                      if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+                      setHoveredCard(null);
+                    }}
+                  >
+                    {/* Pending: show scaled-down GeneratingAnimation */}
+                    {isPending && (
+                      <div className="gen-card-inner">
+                        <div className="mini-anim-wrap">
+                          <GeneratingAnimation mode={card.type} />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Failed */}
+                    {isFailed && (
+                      <div className="gen-card-inner" style={{ gap: 6 }}>
+                        <span style={{ fontSize: 18, opacity: 0.4 }}>⚠</span>
+                        <span style={{ fontSize: 9, color: "rgba(255,100,50,0.7)", letterSpacing: "0.06em", textTransform: "uppercase" }}>Failed</span>
+                      </div>
+                    )}
+
+                    {/* Complete */}
+                    {card.status === "complete" && card.url && (
+                      card.type === "image"
+                        ? <img src={card.url} className="gen-card-img" alt="" />
+                        : <video src={card.url} className="gen-card-img" muted loop playsInline
+                            onMouseEnter={e => (e.currentTarget as HTMLVideoElement).play()}
+                            onMouseLeave={e => { (e.currentTarget as HTMLVideoElement).pause(); (e.currentTarget as HTMLVideoElement).currentTime = 0; }}
+                          />
+                    )}
+
+                    {!isPending && !isFailed && (
                       <>
-                        <div className="fixed inset-0 z-20" onClick={() => { setShowSaveToMenu(false); setShowNewFolderInput(false); setNewFolderName(""); }} />
-                        <div className="chip-popover folder-chip-popover" style={{ right: 0, left: "auto" }}>
-                          <p className="chip-popover-header">Save to folder</p>
-                          <div className="chip-grid chip-grid-3">
-                            {folderList.map(f => (
-                              <button key={f.id} className={`folder-chip-opt${saveToFolder.id === f.id ? " active" : ""}`}
-                                onClick={() => { setSaveToFolder({ id: f.id, name: f.name }); handleSaveAllToFolder(f.id, f.name); }}>
-                                <div className="folder-chip-preview">{[0,1,2,3].map(i => <div key={i} />)}</div>
-                                <span className="folder-chip-name">{f.name}</span>
-                              </button>
-                            ))}
-                            {showNewFolderInput ? (
-                              <button className="folder-chip-opt new-folder-tile" style={{ flexDirection: "column", gap: 4 }}>
-                                <input autoFocus style={{ width: "100%", background: "transparent", border: "none", outline: "none", color: "hsl(var(--foreground))", fontSize: 10, fontFamily: "inherit", textAlign: "center", padding: 0 }}
-                                  placeholder="Name…" value={newFolderName}
-                                  onChange={e => setNewFolderName(e.target.value)}
-                                  onKeyDown={e => { if (e.key === "Enter") handleCreateFolder(); if (e.key === "Escape") { setShowNewFolderInput(false); setNewFolderName(""); } }}
-                                  onClick={e => e.stopPropagation()} />
-                                <span style={{ fontSize: 9, color: "hsl(var(--muted-foreground))" }}>Enter to create</span>
-                              </button>
-                            ) : (
-                              <button className="folder-chip-opt new-folder-tile" onClick={e => { e.stopPropagation(); setShowNewFolderInput(true); }}>
-                                <FolderPlus className="w-4 h-4" />
-                              </button>
-                            )}
-                          </div>
+                        <span className="gen-card-type">{card.type === "image" ? "IMG" : "VID"}</span>
+                        <button className={`gen-card-select${isSelected ? " is-selected" : ""}`}
+                          onClick={(e) => { e.stopPropagation(); toggleSelect(card.key); }} title="Select">
+                          {isSelected && <Check className="w-3 h-3" />}
+                        </button>
+                        <div className="gen-card-actions">
+                          <button className="gen-card-action" title="Full screen"
+                            onClick={(e) => { e.stopPropagation(); card.url && setLightbox({ url: card.url, type: card.type, index: cardIndex }); }}>
+                            <Maximize2 className="w-3 h-3" />
+                          </button>
+                          {card.prompt && (
+                            <button className="gen-card-action" title="Copy prompt"
+                              onClick={(e) => { e.stopPropagation(); setPrompt(card.prompt); }}>
+                              <ClipboardCopy className="w-3 h-3" />
+                            </button>
+                          )}
+                          {card.url && <>
+                            <button className="gen-card-action" title="Use as reference"
+                              onClick={() => setReferenceImages(p => [...p, card.url!])}>
+                              <Pencil className="w-3 h-3" />
+                            </button>
+                            <button className="gen-card-action" title="Open in workflow"
+                              onClick={() => window.dispatchEvent(new CustomEvent("add-image-to-new-workflow", { detail: { url: card.url } }))}>
+                              <WorkflowIcon className="w-3 h-3" />
+                            </button>
+                            <button className="gen-card-action" title="Download"
+                              onClick={() => { const a = document.createElement("a"); a.href = card.url!; a.download = `generation.${card.type === "video" ? "mp4" : "png"}`; a.click(); }}>
+                              <Download className="w-3 h-3" />
+                            </button>
+                          </>}
                         </div>
                       </>
                     )}
                   </div>
-
-                  <div className="session-link-divider" />
-
-                  {/* Clear feed */}
-                  {showClearConfirm ? (
-                    <div className="inline-confirm">
-                      <span className="inline-confirm-text">Clear {sessionGens.length} {sessionGens.length === 1 ? "generation" : "generations"}?</span>
-                      <button className="inline-confirm-btn confirm" onClick={handleClearFeed}>
-                        <Trash2 className="w-3 h-3" /> Clear
-                      </button>
-                      <button className="inline-confirm-btn cancel" onClick={() => setShowClearConfirm(false)}>Cancel</button>
-                    </div>
-                  ) : (
-                    <button className="session-link danger" onClick={() => setShowClearConfirm(true)}>
-                      <Trash2 className="w-3.5 h-3.5" />
-                      Clear
-                    </button>
-                  )}
-                </>
-              )}
-            </div>
-          </div>
-
-          {/* History grid — oldest top-left → newest bottom-right */}
-          {historyGens.length > 0 && (
-            <div className="history-grid">
-              {historyGens.map((gen) => (
-                <HistoryCard
-                  key={gen.id}
-                  gen={gen}
-                  isNew={gen.id === newlyHistoryId}
-                  onUseAsRef={(url) => setReferenceImages(p => [...p, url])}
-                />
-              ))}
+                );
+              })}
             </div>
           )}
-
-          {/* Active generation / thinking area */}
-          <div className="active-gen-wrap">
-            {isGenerating ? (
-              <div className="thinking-area">
-                <GeneratingAnimation mode={mode} />
-              </div>
-            ) : activeGen?.status === "complete" && activeGen.mediaUrl ? (
-              <div className={`active-gen${activeGen.isNew ? " new-arrival" : ""}`}>
-                {activeGen.type === "video"
-                  ? <video src={activeGen.mediaUrl} className="active-gen-media" controls />
-                  : <img src={activeGen.mediaUrl} className="active-gen-media" alt="" />}
-                <div className="active-gen-actions">
-                  <button className="active-gen-action-btn" title="Use as reference"
-                    onClick={() => setReferenceImages(p => [...p, activeGen.mediaUrl!])}>
-                    <Pencil className="w-3.5 h-3.5" />
-                  </button>
-                  <button className="active-gen-action-btn" title="Open in workflow"
-                    onClick={() => window.dispatchEvent(new CustomEvent("add-image-to-new-workflow", { detail: { url: activeGen.mediaUrl } }))}>
-                    <FolderOpen className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-            ) : activeGen?.status === "failed" ? (
-              <div className="active-gen failed-gen">
-                <span style={{ fontSize: 28, opacity: 0.5 }}>⚠</span>
-                <p style={{ margin: "8px 0 0", fontSize: 13, color: "rgba(255,100,50,0.8)" }}>Generation failed</p>
-                <button onClick={() => setSessionGens(prev => prev.filter(g => g.id !== activeGen.id))}
-                  style={{ marginTop: 10, background: "rgba(255,72,0,0.12)", border: "1px solid rgba(255,72,0,0.3)", color: "#FF4800", padding: "5px 14px", borderRadius: 999, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>
-                  Dismiss
-                </button>
-              </div>
-            ) : null}
-          </div>
         </div>
       )}
 
       {/* ── Sticky prompt ── */}
       <div className="prompt-sticky-wrap">
-        {/* Hero prompt card */}
         <div
           className={`prompt-hero-card max-w-2xl mx-auto w-full rounded-[20px] px-6 pt-5 pb-4 bg-card border border-border${promptCardClass ? ` ${promptCardClass}` : ""}`}
           style={{ boxShadow: "var(--shadow-raised-lg)" }}
@@ -528,9 +570,32 @@ export function CreateView({ onLibraryRefresh }: CreateViewProps) {
             />
           </div>
 
-          {/* Reference image previews */}
-          {referenceImages.length > 0 && (
+          {/* Reference / first-frame / last-frame previews */}
+          {(referenceImages.length > 0 || firstFrame || lastFrame) && (
             <div className="flex gap-2 mt-2 mb-1 flex-wrap">
+              {/* First frame */}
+              {firstFrame && (
+                <div className="relative w-12 h-12 rounded-lg overflow-hidden">
+                  <img src={firstFrame} className="w-full h-full object-cover" alt="First frame" />
+                  <span className="absolute bottom-0 left-0 right-0 text-center text-[7px] font-semibold bg-black/60 text-white py-0.5 leading-none">1st</span>
+                  <button onClick={() => setFirstFrame(null)}
+                    className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/70 flex items-center justify-center">
+                    <X className="w-2.5 h-2.5 text-white" />
+                  </button>
+                </div>
+              )}
+              {/* Last frame */}
+              {lastFrame && (
+                <div className="relative w-12 h-12 rounded-lg overflow-hidden">
+                  <img src={lastFrame} className="w-full h-full object-cover" alt="Last frame" />
+                  <span className="absolute bottom-0 left-0 right-0 text-center text-[7px] font-semibold bg-black/60 text-white py-0.5 leading-none">Last</span>
+                  <button onClick={() => setLastFrame(null)}
+                    className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/70 flex items-center justify-center">
+                    <X className="w-2.5 h-2.5 text-white" />
+                  </button>
+                </div>
+              )}
+              {/* Reference images */}
               {referenceImages.map((img, i) => (
                 <div key={i} className="relative w-12 h-12 rounded-lg overflow-hidden">
                   <img src={img} className="w-full h-full object-cover" alt="" />
@@ -565,7 +630,7 @@ export function CreateView({ onLibraryRefresh }: CreateViewProps) {
                   )}
                 </button>
                 {showAddMenu && (
-                  <div className="absolute top-full left-0 mt-1 z-20 rounded-xl overflow-hidden bg-card border border-border min-w-[150px]"
+                  <div className="absolute bottom-full left-0 mb-1 z-20 rounded-xl overflow-hidden bg-card border border-border min-w-[150px]"
                     style={{ boxShadow: "var(--shadow-modal-cv)" }}>
                     <button onClick={() => { fileInputRef.current?.click(); setShowAddMenu(false); }}
                       className="flex items-center gap-2 w-full px-4 py-2.5 text-sm text-left border-none cursor-pointer hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground whitespace-nowrap">
@@ -591,7 +656,12 @@ export function CreateView({ onLibraryRefresh }: CreateViewProps) {
               <TabPill options={[
                 { value: "image" as const, label: "Image", icon: <ImageIcon className="w-3.5 h-3.5" /> },
                 { value: "video" as const, label: "Video", icon: <VideoIcon className="w-3.5 h-3.5" /> },
-              ]} value={mode} onChange={setMode} ariaLabel="Generation mode" />
+              ]} value={mode} onChange={(m) => {
+                setMode(m);
+                if (m === "video" && aspectRatio !== "16:9" && aspectRatio !== "9:16") {
+                  setAspectRatio("16:9");
+                }
+              }} ariaLabel="Generation mode" />
 
               {/* Aspect ratio */}
               <div className="relative">
@@ -603,8 +673,8 @@ export function CreateView({ onLibraryRefresh }: CreateViewProps) {
                 {showAspectMenu && (<>
                   <div className="fixed inset-0 z-20" onClick={() => setShowAspectMenu(false)} />
                   <div className="chip-popover">
-                    <div className="chip-grid chip-grid-3">
-                      {ASPECT_RATIOS.map(({ value, thumbClass }) => (
+                    <div className={`chip-grid ${mode === "video" ? "chip-grid-2" : "chip-grid-3"}`}>
+                      {(mode === "video" ? ASPECT_RATIOS_VIDEO : ASPECT_RATIOS_IMAGE).map(({ value, thumbClass }) => (
                         <button key={value} onClick={() => { setAspectRatio(value); setShowAspectMenu(false); }}
                           className={`chip-grid-opt${aspectRatio === value ? " active" : ""}`}>
                           <div className={`ratio-thumb ${thumbClass}`} />
@@ -625,7 +695,7 @@ export function CreateView({ onLibraryRefresh }: CreateViewProps) {
                     {videoDuration}s
                   </button>
                   {showDurationMenu && (
-                    <div className="absolute top-full left-0 mt-1 z-20 rounded-xl overflow-hidden bg-card border border-border min-w-[70px]"
+                    <div className="absolute bottom-full left-0 mb-1 z-20 rounded-xl overflow-hidden bg-card border border-border min-w-[70px]"
                       style={{ boxShadow: "var(--shadow-modal-cv)" }}>
                       {[4, 6, 8].map(d => (
                         <button key={d} onClick={() => { setVideoDuration(d); setShowDurationMenu(false); }}
@@ -643,14 +713,14 @@ export function CreateView({ onLibraryRefresh }: CreateViewProps) {
               <div className="relative">
                 <button onClick={() => setShowVariationsMenu(v => !v)}
                   className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg border-none cursor-pointer text-xs bg-secondary text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap${showVariationsMenu ? " chip-popover-open" : ""}`}
-                  style={{ boxShadow: "var(--shadow-raised-sm)", border: "1px solid rgba(185,205,190,0.18)" }}>
+                  style={{ boxShadow: "var(--shadow-raised-sm)" }}>
                   <Layers className="w-3 h-3" />{variations}
                 </button>
                 {showVariationsMenu && (<>
                   <div className="fixed inset-0 z-20" onClick={() => setShowVariationsMenu(false)} />
                   <div className="chip-popover">
                     <div className="chip-grid chip-grid-2">
-                      {([1,2,3,4] as const).map(v => (
+                      {([1, 2, 3, 4] as const).map(v => (
                         <button key={v} onClick={() => { setVariations(v); setShowVariationsMenu(false); }}
                           className={`chip-grid-opt${variations === v ? " active" : ""}`}>
                           <div className={`var-thumb v${v}`}>{Array.from({ length: v }).map((_, i) => <div key={i} />)}</div>
@@ -681,7 +751,7 @@ export function CreateView({ onLibraryRefresh }: CreateViewProps) {
                           <button key={f.id} className={`folder-chip-opt${isActive ? " active" : ""}`}
                             onClick={() => { setSaveToFolder(isActive ? { id: null, name: "" } : { id: f.id, name: f.name }); setShowSaveToMenu(false); }}>
                             {isActive && <span className="folder-active-badge">✓</span>}
-                            <div className="folder-chip-preview">{[0,1,2,3].map(i => <div key={i} />)}</div>
+                            <div className="folder-chip-preview">{[0, 1, 2, 3].map(i => <div key={i} />)}</div>
                             <span className="folder-chip-name">{f.name}</span>
                           </button>
                         );
@@ -724,6 +794,113 @@ export function CreateView({ onLibraryRefresh }: CreateViewProps) {
           </div>
         </div>
       </div>
+
+      {/* ── Prompt side card ── */}
+      {hoveredCard && createPortal((() => {
+        const CARD_W = 240;
+        const CARD_GAP = 10;
+        const { rect, result } = hoveredCard;
+        const flipLeft = rect.right + CARD_GAP + CARD_W > window.innerWidth;
+        const left = flipLeft ? rect.left - CARD_GAP - CARD_W : rect.right + CARD_GAP;
+        const top = Math.min(rect.top, window.innerHeight - 220);
+        const typeLabel = result.type === "video" ? "VID" : "IMG";
+        const metaStr = `${result.aspectRatio} · ${typeLabel}`;
+        return (
+          <div
+            style={{
+              position: "fixed", top, left, width: CARD_W, zIndex: 9999,
+              background: "rgba(6,22,25,0.96)",
+              border: "1px solid rgba(185,205,190,0.14)",
+              borderRadius: 10,
+              padding: "14px",
+              boxShadow: "0 16px 48px rgba(0,0,0,0.7), 0 0 0 0.5px rgba(185,205,190,0.06)",
+              animation: "prompt-card-in 180ms cubic-bezier(0.16,1,0.3,1) both",
+              transformOrigin: flipLeft ? "right top" : "left top",
+            }}
+            onMouseEnter={() => { if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current); }}
+            onMouseLeave={() => setHoveredCard(null)}
+          >
+            <p style={{ fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(185,205,190,0.3)", marginBottom: 8 }}>
+              Prompt
+            </p>
+            <p style={{ fontSize: 12, lineHeight: 1.55, color: "rgba(185,205,190,0.85)", marginBottom: 10, maxHeight: 180, overflow: "auto", scrollbarWidth: "thin" }}>
+              {result.prompt || "—"}
+            </p>
+            <span style={{ fontSize: 9, letterSpacing: "0.07em", color: "rgba(185,205,190,0.3)", textTransform: "uppercase" }}>
+              {metaStr}
+            </span>
+          </div>
+        );
+      })(), document.body)}
+
+      {/* ── Lightbox with nav arrows ── */}
+      {lightbox && (() => {
+        const completedResults = sessionResults.filter(r => r.status === "complete" && r.url);
+        const currentIdx = completedResults.findIndex((_, i) => i === lightbox.index) !== -1
+          ? lightbox.index
+          : completedResults.findIndex(r => r.url === lightbox.url);
+        const safeIdx = Math.max(0, Math.min(currentIdx, completedResults.length - 1));
+        const current = completedResults[safeIdx];
+        const canPrev = safeIdx > 0;
+        const canNext = safeIdx < completedResults.length - 1;
+        const navTo = (idx: number) => {
+          const r = completedResults[idx];
+          if (r?.url) setLightbox({ url: r.url, type: r.type, index: idx });
+        };
+        return (
+          <div
+            className="lightbox-backdrop"
+            onClick={() => setLightbox(null)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setLightbox(null);
+              if (e.key === "ArrowLeft" && canPrev) navTo(safeIdx - 1);
+              if (e.key === "ArrowRight" && canNext) navTo(safeIdx + 1);
+            }}
+            tabIndex={-1}
+          >
+            {/* Close */}
+            <button className="lightbox-close" onClick={() => setLightbox(null)} title="Close (Esc)">
+              <X className="w-5 h-5" />
+            </button>
+
+            {/* Counter */}
+            {completedResults.length > 1 && (
+              <div className="lightbox-counter">
+                {safeIdx + 1} / {completedResults.length}
+              </div>
+            )}
+
+            {/* Nav arrows */}
+            {canPrev && (
+              <button className="lightbox-nav left" onClick={(e) => { e.stopPropagation(); navTo(safeIdx - 1); }} title="Previous (←)">
+                ‹
+              </button>
+            )}
+            {canNext && (
+              <button className="lightbox-nav right" onClick={(e) => { e.stopPropagation(); navTo(safeIdx + 1); }} title="Next (→)">
+                ›
+              </button>
+            )}
+
+            {/* Media */}
+            <div className="lightbox-media" onClick={(e) => e.stopPropagation()}>
+              {lightbox.type === "video"
+                ? <video src={lightbox.url} controls autoPlay className="lightbox-img" />
+                : <img src={lightbox.url} className="lightbox-img" alt="" />}
+            </div>
+
+            {/* Prompt below media */}
+            {current?.prompt && (
+              <div className="lightbox-prompt-bar" onClick={(e) => e.stopPropagation()}>
+                <p className="lightbox-prompt-text">{current.prompt}</p>
+                <button className="lightbox-copy-btn" onClick={() => setPrompt(current.prompt)}>
+                  Use prompt ↗
+                </button>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
     </div>
   );

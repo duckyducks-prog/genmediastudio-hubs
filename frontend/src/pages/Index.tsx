@@ -206,8 +206,8 @@ export default function Index() {
           {/* Nav cells */}
           <nav className="flex gap-1.5 items-center flex-shrink-0" aria-label="Main">
             <NavLink icon={<Home className="w-4 h-4" />} label="Home" value="home" />
-            <NavLink icon={<WorkflowIcon className="w-4 h-4" />} label="Canvas" value="workflow" />
             <NavLink icon={<Sparkles className="w-4 h-4" />} label="Generate" value="create" />
+            <NavLink icon={<WorkflowIcon className="w-4 h-4" />} label="Canvas" value="workflow" />
             <button
               onClick={() => setIsLibraryOpen(true)}
               className={`nav-cell${isLibraryOpen ? " nav-cell-active" : ""}`}

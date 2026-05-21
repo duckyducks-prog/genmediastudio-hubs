@@ -267,7 +267,10 @@ class GenerationService:
 
             # Build config with appropriate settings
             config = types.GenerateContentConfig(
-                response_modalities=["IMAGE", "TEXT"]
+                response_modalities=["IMAGE", "TEXT"],
+                image_config=types.ImageConfig(
+                    aspect_ratio=aspect_ratio
+                )
             )
             
             response = await image_client.aio.models.generate_content(
