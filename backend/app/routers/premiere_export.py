@@ -779,11 +779,32 @@ async def fetch_media_bytes(url: str) -> bytes:
 
 
 def _safe_filename(url: str, role: str, index: int) -> str:
+    if url.startswith("data:"):
+        # Extract file extension from the MIME type embedded in the data URL.
+        # e.g. "data:image/png;base64,..." → "png"
+        #      "data:video/mp4;base64,..."  → "mp4"
+        #      "data:audio/wav;base64,..."  → "wav"
+        try:
+            mime = url.split(";")[0].split(":")[1]  # "image/png"
+        except (IndexError, ValueError):
+            mime = ""
+        ext_map = {
+            "image/png": "png", "image/jpeg": "jpg", "image/jpg": "jpg",
+            "image/gif": "gif", "image/webp": "webp",
+            "video/mp4": "mp4", "video/webm": "webm", "video/quicktime": "mov",
+            "audio/wav": "wav", "audio/mpeg": "mp3", "audio/mp3": "mp3",
+            "audio/ogg": "ogg",
+        }
+        ext = ext_map.get(mime)
+        if not ext:
+            ext = "png" if "image" in mime else "wav" if "audio" in mime else "mp4"
+        return f"{role}-{index}.{ext}"
+
     path = url.split("?")[0].rstrip("/")
     basename = path.split("/")[-1]
     basename = re.sub(r"[^\w.\-]", "_", basename)
     if not basename or len(basename) > 60:
-        ext = "wav" if role == "audio" else "mp4"
+        ext = "wav" if role == "audio" else "png" if role == "image" else "mp4"
         basename = f"{role}-{index}.{ext}"
     return basename
 
@@ -831,14 +852,19 @@ async def export_premiere(
                 logger.warning(f"[premiere-export] Failed to fetch {url}: {exc}")
                 continue
 
-            # Determine role for filename generation
-            role = "audio"
+            # Determine role for filename generation (affects fallback extension)
+            role = "video"
             for at in plan.audio_tracks:
                 if any(c.source_url == url for c in at.clips):
                     role = "audio"
                     break
             else:
-                role = "video"
+                # Check if this URL is a watermark (still image) — use "image" role
+                for vt in plan.video_tracks:
+                    for c in vt.clips:
+                        if c.source_url == url and c.wm_position:
+                            role = "image"
+                            break
 
             fname = _safe_filename(url, role, i)
             if fname in media_files:
