@@ -34,7 +34,7 @@
 - [ ] **Step 1: Create the empty tests package**
 
 ```bash
-touch backend/tests/__init__.py
+mkdir -p backend/tests && touch backend/tests/__init__.py
 ```
 
 - [ ] **Step 2: Write failing tests for the XML builder**
@@ -800,7 +800,7 @@ async def test_export_endpoint_returns_zip():
             response = await client.post("/v1/export/premiere", json=_SIMPLE_GRAPH)
 
     assert response.status_code == 200
-    assert response.headers["content-type"] == "application/zip"
+    assert "application/zip" in response.headers["content-type"]
     assert "attachment" in response.headers.get("content-disposition", "")
 
     buf = io.BytesIO(response.content)
@@ -1080,7 +1080,22 @@ git commit -m "feat: POST /v1/export/premiere endpoint — downloads media, buil
 - Modify: `frontend/src/components/workflow/WorkflowToolbar.tsx`
 - Modify: `frontend/src/components/workflow/WorkflowCanvas.tsx`
 
-- [ ] **Step 1: Add the export URL to `frontend/src/lib/api-config.ts`**
+- [ ] **Step 1: Add `API_ENDPOINTS` import to `WorkflowCanvas.tsx`**
+
+`WorkflowCanvas.tsx` does not currently import `API_ENDPOINTS`. Add this import near the other `@/lib` imports at the top of the file:
+
+```typescript
+import { API_ENDPOINTS } from "@/lib/api-config";
+```
+
+Verify it compiles:
+
+```bash
+cd frontend && npx tsc --noEmit --skipLibCheck 2>&1 | grep "WorkflowCanvas" | head -5
+# Expected: no output
+```
+
+- [ ] **Step 3: Add the export URL to `frontend/src/lib/api-config.ts`**
 
 After the `video:` block (around line 51), add:
 
@@ -1097,7 +1112,7 @@ cd frontend && npx tsc --noEmit --skipLibCheck 2>&1 | grep "api-config" | head -
 # Expected: no output (no errors)
 ```
 
-- [ ] **Step 2: Add props and button to `WorkflowToolbar.tsx`**
+- [ ] **Step 4: Add props and button to `WorkflowToolbar.tsx`**
 
 Add two props to the `WorkflowToolbarProps` interface (after `isInsideCompound?: boolean`):
 
@@ -1147,14 +1162,14 @@ Add the Export button inside the `{!collapsed && <>` block, after the Settings b
 )}
 ```
 
-- [ ] **Step 3: Type-check `WorkflowToolbar.tsx`**
+- [ ] **Step 5: Type-check `WorkflowToolbar.tsx`**
 
 ```bash
 cd frontend && npx tsc --noEmit --skipLibCheck 2>&1 | grep "WorkflowToolbar" | head -5
 # Expected: no output
 ```
 
-- [ ] **Step 4: Implement `handleExportPremiere` in `WorkflowCanvas.tsx`**
+- [ ] **Step 6: Implement `handleExportPremiere` in `WorkflowCanvas.tsx`**
 
 Add state near other loading states (search for `isExecuting` state declaration):
 
@@ -1210,7 +1225,7 @@ const handleExportPremiere = useCallback(async () => {
 }, [isExportingPremiere, nodes, edges, toast]);
 ```
 
-- [ ] **Step 5: Compute `hasCompletedVideo` and wire props to `WorkflowToolbar`**
+- [ ] **Step 7: Compute `hasCompletedVideo` and wire props to `WorkflowToolbar`**
 
 Add this derived value near other derived state (before the JSX return):
 
@@ -1229,14 +1244,14 @@ onExportPremiere={hasCompletedVideo ? handleExportPremiere : undefined}
 isExportingPremiere={isExportingPremiere}
 ```
 
-- [ ] **Step 6: Type-check the full frontend**
+- [ ] **Step 8: Type-check the full frontend**
 
 ```bash
 cd frontend && npx tsc --noEmit --skipLibCheck 2>&1 | grep -E "WorkflowCanvas|WorkflowToolbar|api-config" | head -10
 # Expected: no output
 ```
 
-- [ ] **Step 7: Manual smoke-test in the browser**
+- [ ] **Step 9: Manual smoke-test in the browser**
 
 1. Start backend: `cd backend && uvicorn app.main:app --reload --port 8000`
 2. Start frontend: `cd frontend && pnpm dev`
@@ -1246,7 +1261,7 @@ cd frontend && npx tsc --noEmit --skipLibCheck 2>&1 | grep -E "WorkflowCanvas|Wo
 6. Unzip: confirm it contains one `.xml` file and at least one `.mp4`
 7. Open the XML in Premiere Pro — confirm clips appear on the timeline and Premiere finds the media without prompting
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
 git add frontend/src/lib/api-config.ts frontend/src/components/workflow/WorkflowToolbar.tsx frontend/src/components/workflow/WorkflowCanvas.tsx
