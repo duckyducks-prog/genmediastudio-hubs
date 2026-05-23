@@ -1693,8 +1693,29 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
           toast({ title: "Not signed in", variant: "destructive" });
           return;
         }
-        // Strip video data URLs (can be 10s of MB) but keep audio data URLs —
-        // GenerateMusic always outputs data:audio/... and the backend can decode them.
+        // VoiceChanger outputs data:video/... (ElevenLabs never returns a GCS URL).
+        // Save those to the asset library first so the backend gets a real https:// URL.
+        const { saveToLibrary } = await import("@/lib/api-helpers");
+        const resolvedNodes = await Promise.all(nodes.map(async (n) => {
+          if (n.type !== "voiceChanger") return n;
+          const d = n.data as Record<string, any>;
+          const videoUrl = d?.outputs?.video || d?.outputVideoUrl;
+          if (!videoUrl?.startsWith("data:video/")) return n;
+          try {
+            const saved = await saveToLibrary({ imageUrl: videoUrl, prompt: "Voice changed video", assetType: "video" });
+            const gcsUrl = saved?.url;
+            if (!gcsUrl) return n;
+            return {
+              ...n,
+              data: { ...d, outputs: { ...d.outputs, video: gcsUrl }, outputVideoUrl: gcsUrl },
+            };
+          } catch {
+            return n; // fall back — VC track will be missing but export still works
+          }
+        }));
+
+        // Strip remaining video data URLs (can be 10s of MB).
+        // Keep audio data URLs — GenerateMusic always outputs data:audio/...
         const stripDataUrls = (val: unknown): unknown => {
           if (typeof val === "string") return val.startsWith("data:video/") ? null : val;
           if (Array.isArray(val)) return val.map(stripDataUrls);
@@ -1705,7 +1726,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
           }
           return val;
         };
-        const slimNodes = nodes.map((n) => ({ ...n, data: stripDataUrls(n.data) }));
+        const slimNodes = resolvedNodes.map((n) => ({ ...n, data: stripDataUrls(n.data) }));
 
         const response = await fetch(API_ENDPOINTS.export.premiere, {
           method: "POST",

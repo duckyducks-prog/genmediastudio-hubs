@@ -54,9 +54,14 @@ _MERGE_VIDEO_SLOTS = ["video1", "video2", "video3", "video4", "video5", "video6"
 class TrackClip:
     filename: str
     source_url: str
-    duration_frames: int = 0           # filled in after probe
-    timeline_start_frames: int = 0     # position on the timeline
+    duration_frames: int = 0           # actual file duration (filled after probe)
+    timeline_start_frames: int = 0     # position on the timeline (filled after probe)
     opacity: int = 100                 # 0-100, for compositing tracks
+    # Segment replace positioning — set by plan_timeline, resolved in endpoint
+    is_segment_replace: bool = False
+    segment_start_pct: float = 0.0     # startPercent from VideoSegmentReplace node
+    segment_end_pct: float = 100.0     # endPercent  from VideoSegmentReplace node
+    timeline_end_frames: int = 0       # computed in endpoint; 0 = use start+duration
 
 
 @dataclass
@@ -185,20 +190,36 @@ def plan_timeline(nodes: list[dict], edges: list[dict]) -> TimelinePlan:
     # ── V1: base video clips ─────────────────────────────────────────────────
     v1_clips: list[TrackClip] = []
 
+    # Collect segment-replace source URLs FIRST so we can exclude them from V1.
+    # A GenerateVideo node may connect to both MergeVideos AND VideoSegmentReplace;
+    # it should appear only on the overlay track, not duplicated in V1.
+    seg_nodes = [n for n in nodes if n.get("type") == _SEGMENT_REPLACE_TYPE]
+    seg_replace_urls: set[str] = set()
+    seg_replace_tracks: list[tuple[str, float, float]] = []  # (url, start_pct, end_pct)
+    for seg_node in seg_nodes:
+        data_sr = seg_node.get("data") or {}
+        start_pct = float(data_sr.get("startPercent", 0))
+        end_pct = float(data_sr.get("endPercent", 100))
+        src = source_node_for(seg_node["id"], "replacement")
+        url = _get_video_url(src) if src else None
+        if url:
+            seg_replace_urls.add(url)
+            seg_replace_tracks.append((url, start_pct, end_pct))
+
     merge_nodes = [n for n in nodes if n.get("type") == _MERGE_TYPE]
     if merge_nodes:
         data = merge_nodes[0].get("data") or {}
         for slot in _MERGE_VIDEO_SLOTS:
             url = data.get(slot)
-            if url:
+            # Exclude URLs that are segment-replace sources — they go on an overlay track
+            if url and url not in seg_replace_urls:
                 v1_clips.append(TrackClip(filename="", source_url=url))
     else:
-        # No MergeVideos — pick any leaf video node outputs
         for node in nodes:
             ntype = node.get("type", "")
             if ntype in _VIDEO_LEAF_TYPES:
                 url = _get_video_url(node)
-                if url:
+                if url and url not in seg_replace_urls:
                     v1_clips.append(TrackClip(filename="", source_url=url))
 
     # Final fallback: any completed node with a gcsUrl
@@ -206,8 +227,9 @@ def plan_timeline(nodes: list[dict], edges: list[dict]) -> TimelinePlan:
         for node in nodes:
             data = node.get("data") or {}
             url = data.get("gcsUrl") or data.get("videoUrl")
-            if url:
+            if url and url not in seg_replace_urls:
                 v1_clips.append(TrackClip(filename="", source_url=url))
+                break
 
     if v1_clips:
         plan.video_tracks.append(VideoTrack(clips=v1_clips))
@@ -223,27 +245,18 @@ def plan_timeline(nodes: list[dict], edges: list[dict]) -> TimelinePlan:
                 clips=[TrackClip(filename="", source_url=url)],
             ))
 
-    # ── V3: VideoSegmentReplace — replacement clip with time positioning ──────
-    seg_nodes = [n for n in nodes if n.get("type") == _SEGMENT_REPLACE_TYPE]
-    for seg_node in seg_nodes:
-        data = seg_node.get("data") or {}
-        start_pct = float(data.get("startPercent", 0))
-        end_pct = float(data.get("endPercent", 100))
-        # Find the replacement video source via the "replacement" input handle
-        src = source_node_for(seg_node["id"], "replacement")
-        url = _get_video_url(src) if src else None
-        if url:
-            plan.video_tracks.append(VideoTrack(
-                clips=[TrackClip(
-                    filename="",
-                    source_url=url,
-                    # Store percentages temporarily; converted to frames in endpoint
-                    # after we know V1 total duration. Reuse timeline_start_frames
-                    # and duration_frames as percentage * 1000 until resolved.
-                    timeline_start_frames=int(start_pct * 1000),  # marker
-                    duration_frames=int(end_pct * 1000),          # marker (end%)
-                )],
-            ))
+    # ── V2+: VideoSegmentReplace — replacement clip with time positioning ─────
+    # Use dedicated flags instead of encoding percentages as magic frame numbers.
+    for url, start_pct, end_pct in seg_replace_tracks:
+        plan.video_tracks.append(VideoTrack(
+            clips=[TrackClip(
+                filename="",
+                source_url=url,
+                is_segment_replace=True,
+                segment_start_pct=start_pct,
+                segment_end_pct=end_pct,
+            )],
+        ))
 
     # ── V4: VideoWatermark source (compositing layer) ─────────────────────────
     wm_nodes = [n for n in nodes if n.get("type") == _WATERMARK_TYPE]
@@ -376,7 +389,9 @@ def build_xmeml_multitrack(
             file_id = f"file-v{track_idx+1}-{clip_idx}"
 
             start = clip.timeline_start_frames if clip.timeline_start_frames else clip_cursor
-            end = start + clip.duration_frames
+            # Segment replace clips carry an explicit end position (may differ from
+            # start + actual_duration when the segment window ≠ clip file length).
+            end = clip.timeline_end_frames if clip.timeline_end_frames else (start + clip.duration_frames)
 
             ci = ET.SubElement(xml_track, "clipitem", id=item_id)
             ET.SubElement(ci, "name").text = clip.filename
@@ -663,12 +678,24 @@ async def export_premiere(
             fmt_info = probe.get("format") or {}
             duration = float(fmt_info.get("duration", 0))
 
-            # Extract video dimensions from first video stream
+            # Extract video dimensions, accounting for rotation metadata.
+            # Some encoders store portrait video as landscape + rotate tag.
             w, h = 1920, 1080
             for stream in probe.get("streams", []):
                 if stream.get("codec_type") == "video":
                     w = int(stream.get("width", 1920))
                     h = int(stream.get("height", 1080))
+                    # Handle explicit rotate tag (older files)
+                    rotate = int((stream.get("tags") or {}).get("rotate", 0))
+                    if abs(rotate) in (90, 270):
+                        w, h = h, w
+                    # Handle Display Matrix side data (newer files, e.g. iPhone/Veo)
+                    for sd in stream.get("side_data_list", []):
+                        if sd.get("side_data_type") == "Display Matrix":
+                            deg = int(sd.get("rotation", 0))
+                            if abs(deg) in (90, 270):
+                                w, h = h, w
+                            break
                     break
 
             url_to_filename[url] = fname
@@ -700,20 +727,15 @@ async def export_premiere(
                 dur = url_to_duration.get(clip.source_url, 1.0)
                 df = secs_to_frames(dur)
 
-                is_segment_replace = (
-                    track_idx >= 1  # only overlay tracks may be segment replacements
-                    and clip.timeline_start_frames > 0  # encoded as pct * 1000
-                    and clip.duration_frames > 0
-                    and clip.timeline_start_frames <= 100_000
-                )
-                if is_segment_replace:
-                    # Decode percentages stored as int(pct * 1000)
-                    start_pct = clip.timeline_start_frames / 1000.0
-                    end_pct = clip.duration_frames / 1000.0
-                    start_f = round(v1_total_frames * start_pct / 100)
-                    end_f = round(v1_total_frames * end_pct / 100)
+                if clip.is_segment_replace and v1_total_frames > 0:
+                    # Position by percentage of V1 total duration.
+                    # timeline_end_frames records the end position so the XML
+                    # builder can set <end> independently from <start>+<duration>.
+                    start_f = round(v1_total_frames * clip.segment_start_pct / 100)
+                    end_f = round(v1_total_frames * clip.segment_end_pct / 100)
+                    clip.duration_frames = df          # actual file duration for in/out
                     clip.timeline_start_frames = start_f
-                    clip.duration_frames = end_f - start_f
+                    clip.timeline_end_frames = end_f   # may differ from start_f + df
                 else:
                     clip.duration_frames = df
                     if track_idx == 0:
