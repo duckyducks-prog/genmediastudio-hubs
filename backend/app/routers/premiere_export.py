@@ -65,6 +65,10 @@ class TrackClip:
     fade_out_secs: float = 0.0         # audio fade-out duration (from AddMusicToVideo.fadeOut)
     source_width: int = 0              # actual media dimensions (0 = use sequence dims)
     source_height: int = 0
+    # VideoWatermark positioning metadata (used by XML builder for Basic Motion filter)
+    wm_position: str = ""              # "top-right" | "top-left" | "bottom-right" | "bottom-left" | "center"
+    wm_scale: float = 0.0             # fraction of frame width (e.g. 0.15)
+    wm_margin: int = 0                # margin in pixels from frame edge
 
 
 @dataclass
@@ -274,14 +278,22 @@ def plan_timeline(nodes: list[dict], edges: list[dict]) -> TimelinePlan:
     wm_nodes = [n for n in nodes if n.get("type") == _WATERMARK_TYPE]
     for wm_node in wm_nodes:
         data = wm_node.get("data") or {}
-        opacity = int(data.get("opacity", 80))
+        # opacity is stored as 0–1 float; convert to 0–100 for XML
+        raw_opacity = float(data.get("opacity", 1.0))
+        opacity = round(raw_opacity * 100) if raw_opacity <= 1.0 else int(raw_opacity)
+        wm_position = str(data.get("position", "bottom-right"))
+        wm_scale_raw = float(data.get("scale", 0.15))
+        wm_margin = int(data.get("margin", 20))
         wm_src = source_node_for(wm_node["id"], "watermark")
         url = None
         if wm_src:
             url = _get_image_url(wm_src) or _get_video_url(wm_src)
         if url:
             plan.video_tracks.append(VideoTrack(
-                clips=[TrackClip(filename="", source_url=url, opacity=opacity)],
+                clips=[TrackClip(
+                    filename="", source_url=url, opacity=opacity,
+                    wm_position=wm_position, wm_scale=wm_scale_raw, wm_margin=wm_margin,
+                )],
             ))
 
     # ── V5: BurnCaptions output (overlay) ────────────────────────────────────
@@ -411,6 +423,67 @@ def _make_file_el(file_id: str, filename: str, duration_frames: int,
     return f
 
 
+def _watermark_motion_el(
+    frame_w: int, frame_h: int,
+    png_w: int, png_h: int,
+    position: str,
+    margin: int,
+    scale: float,
+) -> ET.Element:
+    """
+    FCP7 'Basic Motion' filter to position a still-image watermark.
+    Coordinates in pixels from frame center; y-up (positive y = toward top).
+    Scale is percentage of the clip's natural pixel size.
+    """
+    if png_w > 0:
+        target_w = frame_w * scale
+        scale_pct = round((target_w / png_w) * 100, 1)
+        target_h = target_w * (png_h / png_w) if png_h > 0 else target_w
+    else:
+        scale_pct = round(scale * 100, 1)
+        target_w = frame_w * scale
+        target_h = target_w
+
+    hw, hh = frame_w / 2.0, frame_h / 2.0
+    tw2, th2 = target_w / 2.0, target_h / 2.0
+
+    # y-up: positive y = top, negative y = bottom
+    coords = {
+        "top-right":    (+hw - margin - tw2, +(hh - margin - th2)),
+        "top-left":     (-(hw - margin - tw2), +(hh - margin - th2)),
+        "bottom-right": (+hw - margin - tw2, -(hh - margin - th2)),
+        "bottom-left":  (-(hw - margin - tw2), -(hh - margin - th2)),
+        "center":       (0.0, 0.0),
+    }
+    cx, cy = coords.get(position, (0.0, 0.0))
+
+    filt = ET.Element("filter")
+    eff = ET.SubElement(filt, "effect")
+    ET.SubElement(eff, "name").text = "Basic Motion"
+    ET.SubElement(eff, "effectid").text = "basic motion"
+    ET.SubElement(eff, "effectcategory").text = "motion"
+    ET.SubElement(eff, "effecttype").text = "motion"
+    ET.SubElement(eff, "mediatype").text = "video"
+
+    for pid, pname, val in [
+        ("scale", "Scale", str(scale_pct)),
+        ("rotation", "Rotation", "0"),
+    ]:
+        p = ET.SubElement(filt, "parameter")
+        ET.SubElement(p, "parameterid").text = pid
+        ET.SubElement(p, "name").text = pname
+        ET.SubElement(p, "value").text = val
+
+    cp = ET.SubElement(filt, "parameter")
+    ET.SubElement(cp, "parameterid").text = "center"
+    ET.SubElement(cp, "name").text = "Center"
+    cv = ET.SubElement(cp, "value")
+    ET.SubElement(cv, "horiz").text = str(round(cx, 1))
+    ET.SubElement(cv, "vert").text = str(round(cy, 1))
+
+    return filt
+
+
 def build_xmeml_multitrack(
     plan: "TimelinePlan",
     fps: int = FPS,
@@ -488,6 +561,14 @@ def build_xmeml_multitrack(
                 kf = ET.SubElement(op_el, "keyframe")
                 ET.SubElement(kf, "when").text = "0"
                 ET.SubElement(kf, "value").text = str(clip.opacity)
+
+            # Basic Motion filter — position the watermark at the correct corner
+            if clip.wm_position:
+                ci.append(_watermark_motion_el(
+                    plan.width, plan.height,
+                    clip.source_width, clip.source_height,
+                    clip.wm_position, clip.wm_margin, clip.wm_scale,
+                ))
 
             # Link V1 clips to their audio counterparts
             if track_idx == 0:
