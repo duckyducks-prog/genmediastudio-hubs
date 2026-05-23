@@ -63,6 +63,8 @@ class TrackClip:
     segment_end_pct: float = 100.0     # endPercent  from VideoSegmentReplace node
     timeline_end_frames: int = 0       # computed in endpoint; 0 = use start+duration
     fade_out_secs: float = 0.0         # audio fade-out duration (from AddMusicToVideo.fadeOut)
+    source_width: int = 0              # actual media dimensions (0 = use sequence dims)
+    source_height: int = 0
 
 
 @dataclass
@@ -85,9 +87,11 @@ class TimelinePlan:
     """
     video_tracks: list[VideoTrack] = field(default_factory=list)
     audio_tracks: list[AudioTrackSpec] = field(default_factory=list)
-    # width/height filled in during endpoint after probing V1 clips
+    # Filled in during endpoint after probing V1 clips
     width: int = 1920
     height: int = 1080
+    fps: int = 30     # sequence timebase (24 or 25 or 30)
+    ntsc: bool = False  # True for 23.976 / 29.97
 
     def all_source_urls(self) -> list[str]:
         """Deduplicated list of every URL that needs downloading."""
@@ -333,16 +337,46 @@ def secs_to_frames(secs: float, fps: int = FPS) -> int:
     return round(secs * fps)
 
 
-def _rate_el(fps: int = FPS) -> ET.Element:
+def parse_frame_rate(r_frame_rate: str) -> tuple[int, bool]:
+    """
+    Convert ffprobe r_frame_rate string to (timebase, ntsc) for FCP7 XML.
+    Returns (24, False) for 24fps, (24, True) for 23.976, (30, True) for 29.97, etc.
+    """
+    try:
+        num, den = r_frame_rate.split("/")
+        exact = float(num) / float(den)
+    except (ValueError, ZeroDivisionError):
+        return (30, False)
+
+    if 23.9 <= exact <= 24.1:
+        return (24, False)
+    if 23.0 <= exact < 23.9:   # 23.976
+        return (24, True)
+    if 24.9 <= exact <= 25.1:
+        return (25, False)
+    if 29.9 <= exact <= 30.1:
+        return (30, False)
+    if 29.0 <= exact < 29.9:   # 29.97
+        return (30, True)
+    if 59.9 <= exact <= 60.1:
+        return (60, False)
+    # Round to nearest common timebase
+    for tb in (24, 25, 30, 60):
+        if abs(exact - tb) < 1:
+            return (tb, False)
+    return (30, False)
+
+
+def _rate_el(fps: int = FPS, ntsc: bool = False) -> ET.Element:
     rate = ET.Element("rate")
     ET.SubElement(rate, "timebase").text = str(fps)
-    ET.SubElement(rate, "ntsc").text = "FALSE"
+    ET.SubElement(rate, "ntsc").text = "TRUE" if ntsc else "FALSE"
     return rate
 
 
-def _timecode_el(fps: int = FPS) -> ET.Element:
+def _timecode_el(fps: int = FPS, ntsc: bool = False) -> ET.Element:
     tc = ET.Element("timecode")
-    tc.append(_rate_el(fps))
+    tc.append(_rate_el(fps, ntsc))
     ET.SubElement(tc, "string").text = "00:00:00:00"
     ET.SubElement(tc, "displayformat").text = "NDF"
     return tc
@@ -350,21 +384,24 @@ def _timecode_el(fps: int = FPS) -> ET.Element:
 
 def _make_file_el(file_id: str, filename: str, duration_frames: int,
                   width: int, height: int, has_video: bool = True,
-                  has_audio: bool = True, fps: int = FPS) -> ET.Element:
+                  has_audio: bool = True, fps: int = FPS,
+                  ntsc: bool = False) -> ET.Element:
     f = ET.Element("file", id=file_id)
     ET.SubElement(f, "name").text = filename
     ET.SubElement(f, "pathurl").text = filename  # filename-only → same-dir auto-link
-    f.append(_rate_el(fps))
+    f.append(_rate_el(fps, ntsc))
     ET.SubElement(f, "duration").text = str(duration_frames)
-    f.append(_timecode_el(fps))
+    f.append(_timecode_el(fps, ntsc))
 
     media = ET.SubElement(f, "media")
     if has_video:
         video = ET.SubElement(media, "video")
         vsc = ET.SubElement(video, "samplecharacteristics")
-        vsc.append(_rate_el(fps))
+        vsc.append(_rate_el(fps, ntsc))
         ET.SubElement(vsc, "width").text = str(width)
         ET.SubElement(vsc, "height").text = str(height)
+        ET.SubElement(vsc, "pixelaspectratio").text = "square"  # 1:1 pixels
+        ET.SubElement(vsc, "fielddominance").text = "none"      # progressive
     if has_audio:
         audio = ET.SubElement(media, "audio")
         asc = ET.SubElement(audio, "samplecharacteristics")
@@ -380,14 +417,17 @@ def build_xmeml_multitrack(
 ) -> str:
     """
     Build FCP7 XML from a resolved TimelinePlan (all durations/positions in frames).
+    Uses plan.fps and plan.ntsc for the actual sequence frame rate.
     """
+    fps = plan.fps  # use detected fps, not the default
+    ntsc = plan.ntsc
     total_frames = sum(c.duration_frames for c in plan.video_tracks[0].clips) if plan.video_tracks else 1
 
     root = ET.Element("xmeml", version="4")
     seq = ET.SubElement(root, "sequence")
     ET.SubElement(seq, "name").text = "GenMedia Studio Export"
     ET.SubElement(seq, "duration").text = str(total_frames)
-    seq.append(_rate_el(fps))
+    seq.append(_rate_el(fps, ntsc))
 
     media = ET.SubElement(seq, "media")
 
@@ -395,9 +435,11 @@ def build_xmeml_multitrack(
     video_sec = ET.SubElement(media, "video")
     fmt = ET.SubElement(video_sec, "format")
     fsc = ET.SubElement(fmt, "samplecharacteristics")
-    fsc.append(_rate_el(fps))
+    fsc.append(_rate_el(fps, ntsc))
     ET.SubElement(fsc, "width").text = str(plan.width)
     ET.SubElement(fsc, "height").text = str(plan.height)
+    ET.SubElement(fsc, "pixelaspectratio").text = "square"
+    ET.SubElement(fsc, "fielddominance").text = "none"
 
     # Tracks declared from bottom to top (V1 first = bottom layer in Premiere)
     file_registry: dict[str, str] = {}  # filename → file_id (avoid duplicate file els)
@@ -426,10 +468,15 @@ def build_xmeml_multitrack(
 
             if clip.filename not in file_registry:
                 file_registry[clip.filename] = file_id
+                # Use media's actual dimensions for the file element.
+                # For still images (PNG watermarks), this prevents Premiere from
+                # stretching the image to fill the sequence frame.
+                file_w = clip.source_width if clip.source_width > 0 else plan.width
+                file_h = clip.source_height if clip.source_height > 0 else plan.height
                 ci.append(_make_file_el(
                     file_id, clip.filename, clip.duration_frames,
-                    plan.width, plan.height, has_video=True, has_audio=(track_idx == 0),
-                    fps=fps
+                    file_w, file_h, has_video=True, has_audio=(track_idx == 0),
+                    fps=fps, ntsc=ntsc,
                 ))
             else:
                 ET.SubElement(ci, "file", id=file_registry[clip.filename])
@@ -501,7 +548,8 @@ def build_xmeml_multitrack(
             ET.SubElement(ci, "end").text = str(clip.timeline_start_frames + clip.duration_frames)
             ci.append(_make_file_el(
                 file_id, clip.filename, clip.duration_frames,
-                plan.width, plan.height, has_video=False, has_audio=True, fps=fps
+                plan.width, plan.height, has_video=False, has_audio=True,
+                fps=fps, ntsc=ntsc,
             ))
 
             # Audio fade-out: emit level keyframes so Premiere shows a visible fade ramp.
@@ -723,18 +771,18 @@ async def export_premiere(
             fmt_info = probe.get("format") or {}
             duration = float(fmt_info.get("duration", 0))
 
-            # Extract video dimensions, accounting for rotation metadata.
-            # Some encoders store portrait video as landscape + rotate tag.
-            w, h = 1920, 1080
+            # Extract video dimensions + frame rate, accounting for rotation metadata.
+            w, h = 0, 0  # 0 = unknown/still image
+            r_frame_rate_str = "30/1"
             for stream in probe.get("streams", []):
                 if stream.get("codec_type") == "video":
-                    w = int(stream.get("width", 1920))
-                    h = int(stream.get("height", 1080))
-                    # Handle explicit rotate tag (older files)
+                    w = int(stream.get("width", 0))
+                    h = int(stream.get("height", 0))
+                    r_frame_rate_str = stream.get("r_frame_rate") or stream.get("avg_frame_rate") or "30/1"
+                    # Handle rotation metadata
                     rotate = int((stream.get("tags") or {}).get("rotate", 0))
                     if abs(rotate) in (90, 270):
                         w, h = h, w
-                    # Handle Display Matrix side data (newer files, e.g. iPhone/Veo)
                     for sd in stream.get("side_data_list", []):
                         if sd.get("side_data_type") == "Display Matrix":
                             deg = int(sd.get("rotation", 0))
@@ -746,20 +794,25 @@ async def export_premiere(
             url_to_filename[url] = fname
             url_to_duration[url] = duration
             url_to_dims[url] = (w, h)
+            url_to_filename[url + "__fps"] = r_frame_rate_str  # piggyback fps
             media_files[fname] = data
 
         if not media_files:
             raise HTTPException(status_code=422, detail="All media downloads failed")
 
         # Resolve plan: assign filenames, compute frame positions, detect resolution
-        # Use dimensions from first successfully downloaded V1 clip
+        # Use dimensions + frame rate from first successfully downloaded V1 clip
         if plan.video_tracks and plan.video_tracks[0].clips:
             first_url = next(
                 (c.source_url for c in plan.video_tracks[0].clips if c.source_url in url_to_dims),
                 None
             )
             if first_url:
-                plan.width, plan.height = url_to_dims[first_url]
+                w, h = url_to_dims[first_url]
+                if w > 0 and h > 0:
+                    plan.width, plan.height = w, h
+                fps_str = url_to_filename.get(first_url + "__fps", "30/1")
+                plan.fps, plan.ntsc = parse_frame_rate(fps_str)
 
         v1_total_frames = 0
 
@@ -770,7 +823,11 @@ async def export_premiere(
                     continue
                 clip.filename = url_to_filename[clip.source_url]
                 dur = url_to_duration.get(clip.source_url, 1.0)
-                df = secs_to_frames(dur)
+                df = secs_to_frames(dur, plan.fps)
+                # Store the media's actual pixel dimensions for the XML file element
+                cw, ch = url_to_dims.get(clip.source_url, (0, 0))
+                clip.source_width = cw
+                clip.source_height = ch
 
                 if clip.is_segment_replace and v1_total_frames > 0:
                     # Position by percentage of V1 total duration.
@@ -807,7 +864,7 @@ async def export_premiere(
                 if clip.source_url in url_to_filename:
                     clip.filename = url_to_filename[clip.source_url]
                     dur = url_to_duration.get(clip.source_url, 1.0)
-                    clip.duration_frames = secs_to_frames(dur)
+                    clip.duration_frames = secs_to_frames(dur, plan.fps)
                     clip.timeline_start_frames = 0
 
         # Remove any clips whose URL wasn't successfully downloaded
