@@ -51,6 +51,11 @@ export const API_ENDPOINTS = {
     burnCaptions: `${VEO_API_BASE_URL}/v1/video/burn-captions`,
   },
 
+  // Export endpoints
+  export: {
+    premiere: `${VEO_API_BASE_URL}/v1/export/premiere`,
+  },
+
   // Assets endpoints
   assets: {
     save: `${VEO_API_BASE_URL}/v1/assets`,

@@ -94,3 +94,13 @@ Ideas and improvements to consider in future iterations. Not prioritized — jus
 
 ### Moodboard node
 - [ ] **Moodboard → Generate connection** — Allow a Moodboard node's output (array of image URLs) to connect directly to GenerateImageNode's `reference_images` input handle. Currently the node exists and aggregates images, but the downstream injection into generation hasn't been validated end-to-end.
+
+---
+
+## Premiere Export — Known remaining issues
+
+### Watermark PNG (Video Compositing node)
+- [ ] PNG imports as "unlinked media" in Premiere despite being present in the ZIP with the correct `.png` extension and `<stillframe>TRUE</stillframe>` in the XML. The FCP7 file element structure for still images may still have a compatibility issue with Premiere's importer. Needs testing with a minimal FCP7 XML containing only a still image reference to isolate the exact format Premiere expects.
+
+### Burn Captions SRT
+- [ ] SRT file not appearing in the ZIP. The backend correctly generates `srt_data` and the frontend executor stores it as `srtData` on the node. Diagnostic logging has been added to the export endpoint — check backend terminal after exporting to see `has_srt=True/False` for the BurnCaptions node. Most likely cause: BurnCaptions node was run before the backend change that added `srt_data` to `BurnCaptionsResponse` — re-running the node after a backend restart should fix it. If `has_srt=False` persists after re-run, the node state is not persisting `srtData` correctly and needs further investigation.

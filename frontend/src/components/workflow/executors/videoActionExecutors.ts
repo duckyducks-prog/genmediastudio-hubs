@@ -1161,7 +1161,11 @@ export async function executeBurnCaptions(
 
     return {
       success: true,
-      data: { videoUrl: outputVideoUrl, outputs: { video: outputVideoUrl } },
+      data: {
+        videoUrl: outputVideoUrl,
+        srtData: result.srt_data ?? null,   // stored for Premiere SRT export
+        outputs: { video: outputVideoUrl },
+      },
     };
   } catch (error) {
     console.error("[BurnCaptions] Failed:", error);

@@ -320,15 +320,19 @@ def convert_svg_to_png(svg_bytes: bytes, output_path: str, width: Optional[int] 
 def detect_image_format(image_bytes: bytes) -> str:
     """
     Detect image format from bytes.
-    
+
     Args:
         image_bytes: Raw image file bytes
-        
+
     Returns:
         Format string: 'svg', 'png', 'jpg', 'jpeg', 'gif', or 'unknown'
     """
-    # Check for SVG (XML-based)
-    if image_bytes.startswith(b'<svg') or image_bytes.startswith(b'<?xml') or b'<svg' in image_bytes[:200]:
+    # Check for SVG: must start with <svg, or start with <?xml AND contain <svg within 1KB.
+    # The stricter check prevents GCS XML error responses (<?xml ... <Error>) from
+    # being misdetected as SVG and triggering a failing cairo conversion.
+    if image_bytes.startswith(b'<svg'):
+        return 'svg'
+    if image_bytes.startswith(b'<?xml') and b'<svg' in image_bytes[:1024]:
         return 'svg'
     
     # Check for PNG
@@ -1092,6 +1096,14 @@ async def add_watermark_to_video(
                     if response.status_code != 200:
                         raise HTTPException(status_code=400, detail=f"Failed to download watermark: {response.status_code}")
                     watermark_bytes = response.content
+                    # Reject XML/HTML error bodies that slipped through with a 200 status
+                    ct = response.headers.get("content-type", "")
+                    if "xml" in ct or "html" in ct:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Watermark URL returned non-image content ({ct}). "
+                                   "The image may be inaccessible or the URL may have expired."
+                        )
             else:
                 watermark_bytes = clean_base64(request.watermark_base64)
 
@@ -1650,6 +1662,7 @@ class BurnCaptionsRequest(BaseModel):
 class BurnCaptionsResponse(BaseModel):
     video_base64: str
     mime_type: str = "video/mp4"
+    srt_data: Optional[str] = None  # SRT subtitle content for Premiere caption track import
 
 
 
@@ -1792,6 +1805,26 @@ def _chunk_words(words: list[dict]) -> list:
 
     flush()
     return entries
+
+
+def _srt_timestamp(seconds: float) -> str:
+    """Convert seconds to SRT timestamp format HH:MM:SS,mmm."""
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = seconds % 60
+    ms = round((s - int(s)) * 1000)
+    return f"{h:02d}:{m:02d}:{int(s):02d},{ms:03d}"
+
+
+def _entries_to_srt(entries: list) -> str:
+    """Convert caption entries [(start, end, text), ...] to SRT format."""
+    lines = []
+    for i, (start, end, text) in enumerate(entries, 1):
+        lines.append(str(i))
+        lines.append(f"{_srt_timestamp(start)} --> {_srt_timestamp(end)}")
+        lines.append(text)
+        lines.append("")
+    return "\n".join(lines)
 
 
 def _ass_timestamp(seconds: float) -> str:
@@ -1990,9 +2023,14 @@ async def burn_captions_to_video(
                 output_bytes = f.read()
 
             output_base64 = base64.b64encode(output_bytes).decode("utf-8")
-            logger.info(f"Burn captions complete: {len(output_bytes)} bytes")
+            srt_content = _entries_to_srt(entries)
+            logger.info(f"Burn captions complete: {len(output_bytes)} bytes, {len(entries)} SRT entries")
 
-            return BurnCaptionsResponse(video_base64=output_base64, mime_type="video/mp4")
+            return BurnCaptionsResponse(
+                video_base64=output_base64,
+                mime_type="video/mp4",
+                srt_data=srt_content,
+            )
 
     except HTTPException:
         raise

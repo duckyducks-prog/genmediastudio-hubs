@@ -3,7 +3,7 @@ from uuid import uuid4
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from app.routers import generation, library, health, workflow, elevenlabs, video_processing, folders, shared, scene_elements, workflow_metadata
+from app.routers import generation, library, health, workflow, elevenlabs, video_processing, folders, shared, scene_elements, workflow_metadata, premiere_export
 from app.logging_config import setup_logger
 from app.exceptions import AppError
 
@@ -169,3 +169,4 @@ app.include_router(scene_elements.router, prefix="/v1/scene-elements", tags=["sc
 app.include_router(workflow_metadata.router, prefix="/v1/workflow-metadata", tags=["workflow-metadata"])
 app.include_router(elevenlabs.router, tags=["elevenlabs"])
 app.include_router(video_processing.router, tags=["video-processing"])
+app.include_router(premiere_export.router)
