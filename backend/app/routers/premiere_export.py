@@ -208,10 +208,17 @@ def plan_timeline(nodes: list[dict], edges: list[dict]) -> TimelinePlan:
 
     merge_nodes = [n for n in nodes if n.get("type") == _MERGE_TYPE]
     if merge_nodes:
-        data = merge_nodes[0].get("data") or {}
+        merge_node = merge_nodes[0]
         for slot in _MERGE_VIDEO_SLOTS:
-            url = data.get(slot)
-            # Exclude URLs that are segment-replace sources — they go on an overlay track
+            # Follow the edge back to the source GenerateVideo node and read its
+            # gcsUrl directly. This is robust to the MergeVideos propagated slot
+            # value being null after frontend stripDataUrls wiped the data URL.
+            src = source_node_for(merge_node["id"], slot)
+            if src:
+                url = _get_video_url(src)
+            else:
+                # Fall back to propagated slot value if no edge (e.g. loaded workflow)
+                url = (merge_node.get("data") or {}).get(slot)
             if url and url not in seg_replace_urls:
                 v1_clips.append(TrackClip(filename="", source_url=url))
     else:
