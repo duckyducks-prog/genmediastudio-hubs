@@ -69,6 +69,7 @@ class TrackClip:
     wm_position: str = ""              # "top-right" | "top-left" | "bottom-right" | "bottom-left" | "center"
     wm_scale: float = 0.0             # fraction of frame width (e.g. 0.15)
     wm_margin: int = 0                # margin in pixels from frame edge
+    is_still_image: bool = False       # True for PNG/JPG watermark overlays
 
 
 @dataclass
@@ -293,6 +294,7 @@ def plan_timeline(nodes: list[dict], edges: list[dict]) -> TimelinePlan:
                 clips=[TrackClip(
                     filename="", source_url=url, opacity=opacity,
                     wm_position=wm_position, wm_scale=wm_scale_raw, wm_margin=wm_margin,
+                    is_still_image=True,
                 )],
             ))
 
@@ -423,6 +425,28 @@ def _make_file_el(file_id: str, filename: str, duration_frames: int,
     return f
 
 
+def _make_still_image_file_el(file_id: str, filename: str,
+                              width: int, height: int) -> ET.Element:
+    """
+    File element for a still image (PNG/JPG).
+    No <rate> or frame-level metadata — Premiere chokes on those for images.
+    """
+    f = ET.Element("file", id=file_id)
+    ET.SubElement(f, "name").text = filename
+    ET.SubElement(f, "pathurl").text = filename
+    # duration=1 for still images — timeline position is controlled by clipitem start/end
+    ET.SubElement(f, "duration").text = "1"
+
+    media = ET.SubElement(f, "media")
+    video = ET.SubElement(media, "video")
+    vsc = ET.SubElement(video, "samplecharacteristics")
+    ET.SubElement(vsc, "width").text = str(width)
+    ET.SubElement(vsc, "height").text = str(height)
+    ET.SubElement(vsc, "pixelaspectratio").text = "square"
+
+    return f
+
+
 def _watermark_motion_el(
     frame_w: int, frame_h: int,
     png_w: int, png_h: int,
@@ -534,24 +558,34 @@ def build_xmeml_multitrack(
             ci = ET.SubElement(xml_track, "clipitem", id=item_id)
             ET.SubElement(ci, "name").text = clip.filename
             ET.SubElement(ci, "duration").text = str(clip.duration_frames)
-            ci.append(_rate_el(fps))
-            ET.SubElement(ci, "in").text = "0"
-            ET.SubElement(ci, "out").text = str(clip.duration_frames - 1)
+            ci.append(_rate_el(fps, ntsc))
+
+            if clip.is_still_image:
+                # in=-1/out=-1 tells Premiere "use entire still image"
+                ET.SubElement(ci, "in").text = "-1"
+                ET.SubElement(ci, "out").text = "-1"
+                ET.SubElement(ci, "stillframe").text = "TRUE"
+            else:
+                ET.SubElement(ci, "in").text = "0"
+                ET.SubElement(ci, "out").text = str(clip.duration_frames - 1)
+
             ET.SubElement(ci, "start").text = str(start)
             ET.SubElement(ci, "end").text = str(end)
 
             if clip.filename not in file_registry:
                 file_registry[clip.filename] = file_id
-                # Use media's actual dimensions for the file element.
-                # For still images (PNG watermarks), this prevents Premiere from
-                # stretching the image to fill the sequence frame.
                 file_w = clip.source_width if clip.source_width > 0 else plan.width
                 file_h = clip.source_height if clip.source_height > 0 else plan.height
-                ci.append(_make_file_el(
-                    file_id, clip.filename, clip.duration_frames,
-                    file_w, file_h, has_video=True, has_audio=(track_idx == 0),
-                    fps=fps, ntsc=ntsc,
-                ))
+                if clip.is_still_image:
+                    ci.append(_make_still_image_file_el(
+                        file_id, clip.filename, file_w, file_h,
+                    ))
+                else:
+                    ci.append(_make_file_el(
+                        file_id, clip.filename, clip.duration_frames,
+                        file_w, file_h, has_video=True, has_audio=(track_idx == 0),
+                        fps=fps, ntsc=ntsc,
+                    ))
             else:
                 ET.SubElement(ci, "file", id=file_registry[clip.filename])
 
@@ -995,10 +1029,12 @@ async def export_premiere(
 
         # Collect SRT caption data from BurnCaptions nodes (stored by frontend executor)
         srt_entries: list[tuple[str, str]] = []  # (filename, srt_content)
-        for i, node in enumerate(nodes):
-            if node.get("type") != _BURN_CAPTIONS_TYPE:
-                continue
-            srt = (node.get("data") or {}).get("srtData")
+        burn_nodes = [n for n in nodes if n.get("type") == _BURN_CAPTIONS_TYPE]
+        logger.info(f"[premiere-export] Found {len(burn_nodes)} BurnCaptions node(s)")
+        for i, node in enumerate(burn_nodes):
+            data_keys = list((node.get("data") or {}).keys())
+            srt = (node.get("data") or {}).get("srtData") or (node.get("data") or {}).get("srt_data")
+            logger.info(f"[premiere-export] BurnCaptions node {i}: data_keys={data_keys}, has_srt={bool(srt)}")
             if srt:
                 label = (node.get("data") or {}).get("customLabel") or f"captions-{i+1}"
                 safe = re.sub(r"[^\w\-]", "_", label)
