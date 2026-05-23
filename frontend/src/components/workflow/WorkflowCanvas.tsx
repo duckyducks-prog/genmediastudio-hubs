@@ -1693,13 +1693,28 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
           toast({ title: "Not signed in", variant: "destructive" });
           return;
         }
+        // Strip base64 data URLs before sending — they can be MBs each and cause
+        // JSON serialisation to exceed string length limits. The backend only needs
+        // GCS https:// URLs; data: blobs can't be fetched server-side anyway.
+        const stripDataUrls = (val: unknown): unknown => {
+          if (typeof val === "string") return val.startsWith("data:") ? null : val;
+          if (Array.isArray(val)) return val.map(stripDataUrls);
+          if (val && typeof val === "object") {
+            return Object.fromEntries(
+              Object.entries(val as Record<string, unknown>).map(([k, v]) => [k, stripDataUrls(v)])
+            );
+          }
+          return val;
+        };
+        const slimNodes = nodes.map((n) => ({ ...n, data: stripDataUrls(n.data) }));
+
         const response = await fetch(API_ENDPOINTS.export.premiere, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({ nodes, edges }),
+          body: JSON.stringify({ nodes: slimNodes, edges }),
         });
         if (!response.ok) {
           const err = await response.json().catch(() => ({}));
