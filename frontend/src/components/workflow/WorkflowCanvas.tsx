@@ -1693,11 +1693,10 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
           toast({ title: "Not signed in", variant: "destructive" });
           return;
         }
-        // Strip base64 data URLs before sending — they can be MBs each and cause
-        // JSON serialisation to exceed string length limits. The backend only needs
-        // GCS https:// URLs; data: blobs can't be fetched server-side anyway.
+        // Strip video data URLs (can be 10s of MB) but keep audio data URLs —
+        // GenerateMusic always outputs data:audio/... and the backend can decode them.
         const stripDataUrls = (val: unknown): unknown => {
-          if (typeof val === "string") return val.startsWith("data:") ? null : val;
+          if (typeof val === "string") return val.startsWith("data:video/") ? null : val;
           if (Array.isArray(val)) return val.map(stripDataUrls);
           if (val && typeof val === "object") {
             return Object.fromEntries(

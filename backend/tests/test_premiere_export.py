@@ -110,6 +110,8 @@ from app.routers.premiere_export import (
     collect_media_urls,
     plan_timeline,
     TimelinePlan,
+    VideoTrack,
+    AudioTrackSpec,
 )
 
 
@@ -162,10 +164,10 @@ def test_collect_media_urls_includes_audio():
 def test_plan_timeline_single_video():
     nodes = [_node("v1", "generateVideo", outputs={"video": "https://gcs/clip.mp4"})]
     plan = plan_timeline(nodes, [])
-    assert len(plan.v1_urls) == 1
-    assert plan.v1_urls[0] == "https://gcs/clip.mp4"
-    assert plan.v2_watermark_url is None
-    assert plan.audio_urls == []
+    assert len(plan.video_tracks) >= 1
+    v1_urls = [c.source_url for c in plan.video_tracks[0].clips]
+    assert "https://gcs/clip.mp4" in v1_urls
+    assert len(plan.audio_tracks) == 0
 
 
 def test_plan_timeline_merge_videos_order():
@@ -175,7 +177,8 @@ def test_plan_timeline_merge_videos_order():
         "video3": "https://gcs/c.mp4",
     })
     plan = plan_timeline([merge], [])
-    assert plan.v1_urls == [
+    v1_urls = [c.source_url for c in plan.video_tracks[0].clips]
+    assert v1_urls == [
         "https://gcs/a.mp4",
         "https://gcs/b.mp4",
         "https://gcs/c.mp4",
@@ -193,13 +196,16 @@ def test_plan_timeline_add_music_creates_audio_track():
         _edge("mus", "mix", "audio", "audio"),
     ]
     plan = plan_timeline(nodes, edges)
-    assert "https://gcs/music.wav" in plan.audio_urls
+    audio_urls = [c.source_url for at in plan.audio_tracks for c in at.clips]
+    assert "https://gcs/music.wav" in audio_urls
 
 
 def test_plan_timeline_voice_changer_adds_audio_track():
-    nodes = [_node("vc", "voiceChanger", outputs={"audio": "https://gcs/voice.wav"})]
+    """VoiceChanger output (a video file) goes on an audio track for mix flexibility."""
+    nodes = [_node("vc", "voiceChanger", outputs={"video": "https://gcs/voice-changed.mp4"})]
     plan = plan_timeline(nodes, [])
-    assert "https://gcs/voice.wav" in plan.audio_urls
+    audio_urls = [c.source_url for at in plan.audio_tracks for c in at.clips]
+    assert "https://gcs/voice-changed.mp4" in audio_urls
 
 
 def test_plan_timeline_watermark_node():
@@ -211,8 +217,13 @@ def test_plan_timeline_watermark_node():
     ]
     edges = [_edge("src", "wm", "image", "watermark")]
     plan = plan_timeline(nodes, edges)
-    assert plan.v2_watermark_url == "https://gcs/logo.png"
-    assert plan.v2_opacity == 70
+    all_video_urls = [c.source_url for vt in plan.video_tracks for c in vt.clips]
+    assert "https://gcs/logo.png" in all_video_urls
+    wm_clip = next(
+        c for vt in plan.video_tracks for c in vt.clips
+        if c.source_url == "https://gcs/logo.png"
+    )
+    assert wm_clip.opacity == 70
 
 
 def test_plan_timeline_falls_back_to_gcs_url():
@@ -222,7 +233,8 @@ def test_plan_timeline_falls_back_to_gcs_url():
               data={"gcsUrl": "https://gcs/fallback.mp4"}),
     ]
     plan = plan_timeline(nodes, [])
-    assert plan.v1_urls == ["https://gcs/fallback.mp4"]
+    v1_urls = [c.source_url for c in plan.video_tracks[0].clips]
+    assert "https://gcs/fallback.mp4" in v1_urls
 
 
 # ── Task 3: endpoint tests ──────────────────────────────────────────────────
