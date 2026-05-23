@@ -414,6 +414,7 @@ def _make_file_el(file_id: str, filename: str, duration_frames: int,
 def build_xmeml_multitrack(
     plan: "TimelinePlan",
     fps: int = FPS,
+    sequence_name: str = "GenMedia Studio Export",
 ) -> str:
     """
     Build FCP7 XML from a resolved TimelinePlan (all durations/positions in frames).
@@ -425,7 +426,7 @@ def build_xmeml_multitrack(
 
     root = ET.Element("xmeml", version="4")
     seq = ET.SubElement(root, "sequence")
-    ET.SubElement(seq, "name").text = "GenMedia Studio Export"
+    ET.SubElement(seq, "name").text = sequence_name
     ET.SubElement(seq, "duration").text = str(total_frames)
     seq.append(_rate_el(fps, ntsc))
 
@@ -711,6 +712,7 @@ def _safe_filename(url: str, role: str, index: int) -> str:
 class ExportRequest(BaseModel):
     nodes: list[dict[str, Any]]
     edges: list[dict[str, Any]]
+    workflow_name: str = "GenMedia Export"
 
 
 # ── HTTP endpoint ─────────────────────────────────────────────────────────────
@@ -882,7 +884,7 @@ async def export_premiere(
         if not plan.video_tracks:
             raise HTTPException(status_code=422, detail="No video clips could be assembled")
 
-        xml_str = build_xmeml_multitrack(plan)
+        xml_str = build_xmeml_multitrack(plan, sequence_name=req.workflow_name)
 
         # Collect SRT caption data from BurnCaptions nodes (stored by frontend executor)
         srt_entries: list[tuple[str, str]] = []  # (filename, srt_content)
@@ -896,8 +898,9 @@ async def export_premiere(
                 srt_entries.append((f"{safe}.srt", srt))
 
         timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
-        zip_filename = f"genmediastudio-{timestamp}.zip"
-        xml_filename = f"genmediastudio-{timestamp}.xml"
+        safe_name = re.sub(r"[^\w\s\-]", "", req.workflow_name).strip().replace(" ", "-") or "export"
+        zip_filename = f"{safe_name}-{timestamp}.zip"
+        xml_filename = f"{safe_name}-{timestamp}.xml"
 
         zip_buf = io.BytesIO()
         with zipfile.ZipFile(zip_buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:

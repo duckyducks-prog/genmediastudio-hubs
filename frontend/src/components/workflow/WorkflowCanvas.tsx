@@ -1734,7 +1734,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
             "Content-Type": "application/json",
             Authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({ nodes: slimNodes, edges }),
+          body: JSON.stringify({ nodes: slimNodes, edges, workflow_name: currentWorkflowName }),
         });
         if (!response.ok) {
           const err = await response.json().catch(() => ({}));
