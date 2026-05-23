@@ -64,6 +64,7 @@ import {
 import { useUnsavedChangesWarning } from "@/hooks/useUnsavedChangesWarning";
 import { nodeTypes, getDefaultNodeData } from "./registry";
 import { WorkflowRunningScreen } from "./WorkflowRunningScreen";
+import { API_ENDPOINTS } from "@/lib/api-config";
 
 export interface WorkflowCanvasRef {
   loadWorkflow: (
@@ -112,6 +113,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
     const [recentNodeTypes, setRecentNodeTypes] = useState<NodeType[]>([]);
     const lastCursorPosRef = useRef({ x: 0, y: 0 });
     const [parallelExecution, setParallelExecution] = useState(false);
+    const [isExportingPremiere, setIsExportingPremiere] = useState(false);
     // Compound node navigation stack (for navigate-into editing)
     const [compoundNavStack, setCompoundNavStack] = useState<CompoundNavEntry[]>([]);
     const isInsideCompound = compoundNavStack.length > 0;
@@ -1681,6 +1683,50 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
         .finally(() => { isBulkRunning.current = false; });
     }, [nodes, executeSingleNode, toast]);
 
+    const handleExportPremiere = useCallback(async () => {
+      if (isExportingPremiere) return;
+      setIsExportingPremiere(true);
+      try {
+        const { auth } = await import("@/lib/firebase");
+        const token = await auth.currentUser?.getIdToken();
+        if (!token) {
+          toast({ title: "Not signed in", variant: "destructive" });
+          return;
+        }
+        const response = await fetch(API_ENDPOINTS.export.premiere, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ nodes, edges }),
+        });
+        if (!response.ok) {
+          const err = await response.json().catch(() => ({}));
+          throw new Error((err as any).detail || `Export failed (${response.status})`);
+        }
+        const blob = await response.blob();
+        const disposition = response.headers.get("content-disposition") || "";
+        const match = disposition.match(/filename="([^"]+)"/);
+        const filename = match?.[1] ?? "genmediastudio-export.zip";
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+        toast({ title: "Export ready", description: `Downloaded ${filename}` });
+      } catch (err) {
+        toast({
+          title: "Export failed",
+          description: err instanceof Error ? err.message : String(err),
+          variant: "destructive",
+        });
+      } finally {
+        setIsExportingPremiere(false);
+      }
+    }, [isExportingPremiere, nodes, edges, toast]);
+
     const handleDuplicateNode = useCallback(
       (nodeId: string) => {
         const nodeToDuplicate = nodes.find((n) => n.id === nodeId);
@@ -2050,6 +2096,14 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
               totalNodes={totalNodes}
               isReadOnly={isReadOnly}
               isInsideCompound={isInsideCompound}
+              onExportPremiere={
+                nodes.some((n) => n.data.status === "completed" && (
+                  (n.data.outputs as any)?.video || (n.data as any).gcsUrl || (n.data as any).videoUrl
+                ))
+                  ? handleExportPremiere
+                  : undefined
+              }
+              isExportingPremiere={isExportingPremiere}
             />
             <FloatingLabels nodes={nodes} />
           </ReactFlow>

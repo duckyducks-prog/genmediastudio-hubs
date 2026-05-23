@@ -15,6 +15,7 @@ import {
   PanelRightClose,
   PanelRightOpen,
   Settings,
+  Download,
 } from "lucide-react";
 import { useReactFlow } from "reactflow";
 
@@ -34,6 +35,8 @@ interface WorkflowToolbarProps {
   totalNodes?: number;
   isReadOnly?: boolean;
   isInsideCompound?: boolean;
+  onExportPremiere?: () => void;
+  isExportingPremiere?: boolean;
 }
 
 export default function WorkflowToolbar({
@@ -52,6 +55,8 @@ export default function WorkflowToolbar({
   totalNodes: _totalNodes,
   isReadOnly = false,
   isInsideCompound = false,
+  onExportPremiere,
+  isExportingPremiere = false,
 }: WorkflowToolbarProps) {
   const { zoomIn, zoomOut, fitView } = useReactFlow();
   const [collapsed, setCollapsed] = useState(false);
@@ -180,6 +185,26 @@ export default function WorkflowToolbar({
         >
           <Settings className="w-3.5 h-3.5" />
         </button>
+
+        {/* Export to Premiere */}
+        {onExportPremiere && !isReadOnly && !isInsideCompound && (
+          <>
+            <div className="w-px h-6 bg-border mx-0.5" />
+            <button
+              onClick={onExportPremiere}
+              disabled={isExportingPremiere}
+              className="toolbar-btn text-pill"
+              title="Export timeline to Adobe Premiere Pro (downloads ZIP)"
+            >
+              {isExportingPremiere ? (
+                <Spinner size={14} />
+              ) : (
+                <Download className="w-3.5 h-3.5" />
+              )}
+              <span>{isExportingPremiere ? "Exporting…" : "Open in Premiere"}</span>
+            </button>
+          </>
+        )}
 
         <div className="w-px h-6 bg-border mx-0.5" />
 
