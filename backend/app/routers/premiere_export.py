@@ -62,6 +62,7 @@ class TrackClip:
     segment_start_pct: float = 0.0     # startPercent from VideoSegmentReplace node
     segment_end_pct: float = 100.0     # endPercent  from VideoSegmentReplace node
     timeline_end_frames: int = 0       # computed in endpoint; 0 = use start+duration
+    fade_out_secs: float = 0.0         # audio fade-out duration (from AddMusicToVideo.fadeOut)
 
 
 @dataclass
@@ -288,13 +289,27 @@ def plan_timeline(nodes: list[dict], edges: list[dict]) -> TimelinePlan:
                 clips=[TrackClip(filename="", source_url=url)],
             ))
 
-    # ── Audio: GenerateMusic ─────────────────────────────────────────────────
+    # ── Audio: GenerateMusic (with fade-out from AddMusicToVideo if present) ───
+    # Build audio_url → fade_out_secs by looking at AddMusicToVideo nodes
+    audio_fadeout: dict[str, float] = {}
+    for n in nodes:
+        if n.get("type") != _ADD_MUSIC_TYPE:
+            continue
+        fade_secs = float((n.get("data") or {}).get("fadeOut", 0))
+        if fade_secs > 0:
+            audio_src = source_node_for(n["id"], "audio")
+            if audio_src:
+                a_url = _get_audio_url(audio_src)
+                if a_url:
+                    audio_fadeout[a_url] = fade_secs
+
     music_nodes = [n for n in nodes if n.get("type") == _GENERATE_MUSIC_TYPE]
     for mus_node in music_nodes:
         url = _get_audio_url(mus_node)
         if url:
             plan.audio_tracks.append(AudioTrackSpec(
-                clips=[TrackClip(filename="", source_url=url)],
+                clips=[TrackClip(filename="", source_url=url,
+                                 fade_out_secs=audio_fadeout.get(url, 0.0))],
             ))
 
     return plan
@@ -488,6 +503,29 @@ def build_xmeml_multitrack(
                 file_id, clip.filename, clip.duration_frames,
                 plan.width, plan.height, has_video=False, has_audio=True, fps=fps
             ))
+
+            # Audio fade-out: emit level keyframes so Premiere shows a visible fade ramp.
+            # Level uses dB scale: 0 = unity gain, -96 = silence.
+            fade_frames = secs_to_frames(clip.fade_out_secs, fps)
+            if fade_frames > 0 and clip.duration_frames > fade_frames:
+                fade_start = clip.duration_frames - fade_frames
+                filt = ET.SubElement(ci, "filter")
+                eff = ET.SubElement(filt, "effect")
+                ET.SubElement(eff, "name").text = "Audio Levels"
+                ET.SubElement(eff, "effectid").text = "audiolevels"
+                ET.SubElement(eff, "effectcategory").text = "audioEffect"
+                ET.SubElement(eff, "effecttype").text = "audioEffect"
+                ET.SubElement(eff, "mediatype").text = "audio"
+                param = ET.SubElement(filt, "parameter")
+                ET.SubElement(param, "parameterid").text = "level"
+                ET.SubElement(param, "name").text = "Level"
+                ET.SubElement(param, "value").text = "0"
+                for when, value in [(0, "0"), (fade_start, "0"), (clip.duration_frames - 1, "-96")]:
+                    kf = ET.SubElement(param, "keyframe")
+                    ET.SubElement(kf, "when").text = str(when)
+                    ET.SubElement(kf, "value").text = value
+                    interp = ET.SubElement(kf, "interpolation")
+                    ET.SubElement(interp, "type").text = "linear"
 
     xml_bytes = ET.tostring(root, encoding="unicode", xml_declaration=False)
     return '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE xmeml>\n' + xml_bytes
@@ -754,6 +792,16 @@ async def export_premiere(
             if track_idx == 0:
                 v1_total_frames = cursor
 
+        # Still-image overlays (watermark PNG etc.) probe as 0 duration.
+        # Extend them to match the full V1 duration so they cover the whole timeline.
+        if v1_total_frames > 0:
+            for track_idx, vtrack in enumerate(plan.video_tracks):
+                if track_idx == 0:
+                    continue
+                for clip in vtrack.clips:
+                    if clip.duration_frames == 0 and clip.filename:
+                        clip.duration_frames = v1_total_frames
+
         for atrack in plan.audio_tracks:
             for clip in atrack.clips:
                 if clip.source_url in url_to_filename:
@@ -779,6 +827,17 @@ async def export_premiere(
 
         xml_str = build_xmeml_multitrack(plan)
 
+        # Collect SRT caption data from BurnCaptions nodes (stored by frontend executor)
+        srt_entries: list[tuple[str, str]] = []  # (filename, srt_content)
+        for i, node in enumerate(nodes):
+            if node.get("type") != _BURN_CAPTIONS_TYPE:
+                continue
+            srt = (node.get("data") or {}).get("srtData")
+            if srt:
+                label = (node.get("data") or {}).get("customLabel") or f"captions-{i+1}"
+                safe = re.sub(r"[^\w\-]", "_", label)
+                srt_entries.append((f"{safe}.srt", srt))
+
         timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
         zip_filename = f"genmediastudio-{timestamp}.zip"
         xml_filename = f"genmediastudio-{timestamp}.xml"
@@ -788,6 +847,9 @@ async def export_premiere(
             zf.writestr(xml_filename, xml_str.encode("utf-8"))
             for fname, fdata in media_files.items():
                 zf.writestr(fname, fdata)
+            for srt_fname, srt_content in srt_entries:
+                zf.writestr(srt_fname, srt_content.encode("utf-8"))
+                logger.info(f"[premiere-export] Included captions: {srt_fname}")
 
         zip_bytes = zip_buf.getvalue()
 

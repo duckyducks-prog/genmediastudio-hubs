@@ -1662,6 +1662,7 @@ class BurnCaptionsRequest(BaseModel):
 class BurnCaptionsResponse(BaseModel):
     video_base64: str
     mime_type: str = "video/mp4"
+    srt_data: Optional[str] = None  # SRT subtitle content for Premiere caption track import
 
 
 
@@ -1804,6 +1805,26 @@ def _chunk_words(words: list[dict]) -> list:
 
     flush()
     return entries
+
+
+def _srt_timestamp(seconds: float) -> str:
+    """Convert seconds to SRT timestamp format HH:MM:SS,mmm."""
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = seconds % 60
+    ms = round((s - int(s)) * 1000)
+    return f"{h:02d}:{m:02d}:{int(s):02d},{ms:03d}"
+
+
+def _entries_to_srt(entries: list) -> str:
+    """Convert caption entries [(start, end, text), ...] to SRT format."""
+    lines = []
+    for i, (start, end, text) in enumerate(entries, 1):
+        lines.append(str(i))
+        lines.append(f"{_srt_timestamp(start)} --> {_srt_timestamp(end)}")
+        lines.append(text)
+        lines.append("")
+    return "\n".join(lines)
 
 
 def _ass_timestamp(seconds: float) -> str:
@@ -2002,9 +2023,14 @@ async def burn_captions_to_video(
                 output_bytes = f.read()
 
             output_base64 = base64.b64encode(output_bytes).decode("utf-8")
-            logger.info(f"Burn captions complete: {len(output_bytes)} bytes")
+            srt_content = _entries_to_srt(entries)
+            logger.info(f"Burn captions complete: {len(output_bytes)} bytes, {len(entries)} SRT entries")
 
-            return BurnCaptionsResponse(video_base64=output_base64, mime_type="video/mp4")
+            return BurnCaptionsResponse(
+                video_base64=output_base64,
+                mime_type="video/mp4",
+                srt_data=srt_content,
+            )
 
     except HTTPException:
         raise
