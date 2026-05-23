@@ -70,3 +70,27 @@
 - [ ] Get environment variables/secrets from Leticia
 - [ ] Test backend API connectivity with new frontend URL
 - [ ] Resolve Firebase authentication domain issue ✅
+
+---
+
+## Feature Backlog
+
+Ideas and improvements to consider in future iterations. Not prioritized — just captured so they don't get lost.
+
+### Burn Captions node
+- [ ] **RTL auto-detection** — Detect Hebrew/Arabic/Farsi in the Whisper transcript and wrap ASS lines with U+202B/U+202C before writing the subtitle file. Zero impact on existing English workflows (threshold: >30% RTL chars). Safe, no UI change needed.
+
+### Element Studio / Character chips
+- [ ] **Wardrobe style variants** — After saving a character, offer "Create wardrobe styles for [name]". Two creation modes: (1) prompt-based ("athletic look, casual look" → generate shots using character's 6 reference images + wardrobe prompt), (2) reference-image-based (upload wardrobe photos → generate character wearing that outfit). Data model: add `parent_element_id` to SceneElement; style variants are child elements linked to their base character. Character chip catalog shows base chip + expandable style sub-chips.
+- [ ] **Location Studio** — Same 3-phase creation flow as Character Studio (upload base image → auto-generate 6 standardized shots → approval grid → save). Apply after character creation is proven.
+- [ ] **Prop Studio** — Same pattern as Location. Lower priority.
+
+### Prompt / chip system
+- [ ] **Full @chip tokenization** — Replace the current text-injection approach (chips append text to the prompt field) with real @-mention chip tokens in the ChipTextarea. Chips would be rendered as pill tokens inside the textarea, removable with ×, and serialized separately from the plain text prompt. Requires a custom contenteditable or token-input component. Currently deferred because the text-injection approach works adequately.
+- [ ] **Video chip support** — Character/location chips injecting reference images into GenerateVideoNode (first-frame flow). Currently chips only inject refs into GenerateImageNode. Needs design for how video uses reference images differently from image generation.
+
+### Workflow canvas
+- [ ] **Group Nodes ("Compound nodes")** — The `_createCompoundFromSelection` function exists in WorkflowCanvas.tsx but is not exposed in the UI. When ready, wire it to the bulk-selection context menu as "Group nodes". Selecting 2+ nodes and grouping them creates a reusable compound node with exposed input/output handles.
+
+### Moodboard node
+- [ ] **Moodboard → Generate connection** — Allow a Moodboard node's output (array of image URLs) to connect directly to GenerateImageNode's `reference_images` input handle. Currently the node exists and aggregates images, but the downstream injection into generation hasn't been validated end-to-end.

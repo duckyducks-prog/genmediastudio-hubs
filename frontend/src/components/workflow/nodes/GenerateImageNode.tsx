@@ -2,14 +2,6 @@ import { logger } from "@/lib/logger";
 import { memo, useState, useEffect, useRef } from "react";
 import { Position, NodeProps } from "reactflow";
 import { ConnectedHandle } from './ConnectedHandle';
-import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { GenerateImageNodeData, NODE_CONFIGURATIONS, NodeType } from "../types";
 import { API_ENDPOINTS } from "@/lib/api-config";
 import {
@@ -54,13 +46,14 @@ function GenerateImageNode({ data, id }: NodeProps<GenerateImageNodeData>) {
     });
   }, [id, status, isCompleted, incomingImageUrl, images, data]);
 
-  const [upscaleFactor, setUpscaleFactor] = useState<string>("x2");
+  const [upscaleFactor, _setUpscaleFactor] = useState<string>("x2");
   const [isUpscaling, setIsUpscaling] = useState(false);
   const [upscaleError, setUpscaleError] = useState<string | null>(null);
   const [currentImageUrl, setCurrentImageUrl] = useState<string | null>(null);
   const [savedAssetId, setSavedAssetId] = useState<string | null>(data.savedAssetId || null);
   const [assignedFolderId, setAssignedFolderId] = useState<string | null>(null);
-  const [isSavingFolder, setIsSavingFolder] = useState(false);
+  const [_isSavingFolder, setIsSavingFolder] = useState(false);
+  const [showFolderPicker, setShowFolderPicker] = useState(false);
   const foldersFetched = useRef(false);
   const { folders, fetchFolders } = useFolders();
   const { toast } = useToast();
@@ -377,89 +370,50 @@ function GenerateImageNode({ data, id }: NodeProps<GenerateImageNodeData>) {
               />
             </div>
 
-            {/* Upscale Controls */}
-            <div className="flex gap-2 items-center">
-              <Select
-                value={upscaleFactor}
-                onValueChange={setUpscaleFactor}
-                disabled={isUpscaling || data.readOnly}
-              >
-                <SelectTrigger className="w-20 h-8">
-                  <SelectValue placeholder="x2" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="x2">x2</SelectItem>
-                  <SelectItem value="x3">x3</SelectItem>
-                  <SelectItem value="x4">x4</SelectItem>
-                </SelectContent>
-              </Select>
-
-              <Button
-                onClick={handleUpscale}
-                disabled={isUpscaling || data.readOnly}
-                variant="secondary"
-                size="sm"
-                className="flex-1"
-              >
-                {isUpscaling ? (
-                  <>
-                    <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                    Upscaling...
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-3 h-3 mr-1" />
-                    Upscale
-                  </>
-                )}
-              </Button>
-            </div>
-
-            {/* Error Message */}
             {upscaleError && (
-              <div className="text-xs text-red-500 bg-red-50 dark:bg-red-950/20 p-2 rounded">
-                {upscaleError}
-              </div>
+              <p className="text-xs text-destructive mt-1">{upscaleError}</p>
             )}
 
-            {/* Download Button */}
-            <Button
-              onClick={handleDownload}
-              variant="outline"
-              size="sm"
-              className="w-full"
-            >
-              <Download className="w-3 h-3 mr-1" />
-              Download Image
-            </Button>
-
-            {/* Folder Picker (only when asset is saved) */}
-            {savedAssetId && folders.length > 0 && (
-              <div className="flex items-center gap-1.5">
-                <FolderOpen className="w-3 h-3 text-muted-foreground shrink-0" />
-                <Select
-                  value={assignedFolderId ?? "__unset__"}
-                  onValueChange={handleAssignFolder}
-                  disabled={isSavingFolder || data.readOnly}
-                >
-                  <SelectTrigger className="h-7 text-xs flex-1">
-                    <SelectValue placeholder="Add to folder…" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {assignedFolderId && (
-                      <SelectItem value="__none__">Remove from folder</SelectItem>
-                    )}
-                    {folders.map((f) => (
-                      <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {isSavingFolder && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground shrink-0" />}
-              </div>
-            )}
-
-            {/* Run Node Button */}
-            <RunNodeButton nodeId={id} isExecuting={isGenerating} disabled={data.readOnly} label="Regenerate" loadingLabel="Generating..." />
+            {/* Icon toolbar — completed state */}
+            <div className="flex items-center gap-1 px-0.5 pt-1 border-t border-border mt-1">
+              <button onClick={handleDownload} className="node-tool-btn" title="Download">
+                <Download className="w-3.5 h-3.5" />
+                <span className="node-tool-tip">Download</span>
+              </button>
+              <button onClick={handleUpscale} disabled={isUpscaling || data.readOnly} className="node-tool-btn" title="Upscale">
+                {isUpscaling ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                <span className="node-tool-tip">Upscale {upscaleFactor}</span>
+              </button>
+              {savedAssetId && folders.length > 0 && (
+                <div className="relative">
+                  <button className="node-tool-btn" title="Save to folder" onClick={() => setShowFolderPicker(v => !v)}>
+                    <FolderOpen className="w-3.5 h-3.5" />
+                    <span className="node-tool-tip">Save to folder</span>
+                  </button>
+                  {showFolderPicker && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setShowFolderPicker(false)} />
+                      <div className="absolute bottom-full left-0 mb-1 z-50 bg-card border border-border rounded-lg shadow-xl py-1 min-w-[140px]">
+                        {assignedFolderId && (
+                          <button onClick={() => { handleAssignFolder("__none__"); setShowFolderPicker(false); }}
+                            className="w-full text-left px-3 py-2 text-xs text-muted-foreground hover:bg-accent transition-colors">
+                            Remove from folder
+                          </button>
+                        )}
+                        {folders.map(f => (
+                          <button key={f.id} onClick={() => { handleAssignFolder(f.id); setShowFolderPicker(false); }}
+                            className={`w-full text-left px-3 py-2 text-xs hover:bg-accent transition-colors ${assignedFolderId === f.id ? "text-primary" : ""}`}>
+                            {f.name}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+              <div className="flex-1" />
+              <RunNodeButton nodeId={id} isExecuting={isGenerating} disabled={data.readOnly} label="Regenerate" loadingLabel="Generating..." compact />
+            </div>
           </div>
         )}
 
@@ -475,9 +429,14 @@ function GenerateImageNode({ data, id }: NodeProps<GenerateImageNodeData>) {
                 {!isGenerating && "Run workflow to generate"}
               </p>
             </div>
-
-            {/* Run Node Button */}
-            <RunNodeButton nodeId={id} isExecuting={isGenerating} disabled={data.readOnly} label="Generate Image" loadingLabel="Generating..." />
+            {/* Toolbar — idle state (only Run) */}
+            <div className="flex items-center gap-1 px-0.5 pt-1 border-t border-border">
+              <button disabled className="node-tool-btn" style={{opacity:0.25}} title="Download"><Download className="w-3.5 h-3.5"/></button>
+              <button disabled className="node-tool-btn" style={{opacity:0.25}} title="Upscale"><Sparkles className="w-3.5 h-3.5"/></button>
+              <button disabled className="node-tool-btn" style={{opacity:0.25}} title="Save to folder"><FolderOpen className="w-3.5 h-3.5"/></button>
+              <div className="flex-1" />
+              <RunNodeButton nodeId={id} isExecuting={isGenerating} disabled={data.readOnly} label="Generate" loadingLabel="Generating..." compact />
+            </div>
           </div>
         )}
 

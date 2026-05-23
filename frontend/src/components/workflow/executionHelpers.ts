@@ -413,19 +413,34 @@ export function gatherNodeInputs(
       const sourceNode = allNodes.find((n) => n.id === edge.source);
       if (!sourceNode || sourceNode.type !== NodeType.Prompt) return;
       const activeElements: { name: string; elementType: string; referenceImageUrls: string[] }[] = (sourceNode.data as any).activeElements ?? [];
+      // Track per-type index so multiple characters get distinct descriptors
+      const typeCount: Record<string, number> = {};
+      const ORDINALS = ["first", "second", "third", "fourth"];
+      const MAX_TOTAL_REFS = 18; // stay safely under backend limit of 20
+
       for (const el of activeElements) {
-        // Add reference images
+        // Add reference images — cap total to avoid backend validation error
+        let imagesAdded = 0;
         if (el.referenceImageUrls?.length) {
           if (!inputs["reference_images"]) inputs["reference_images"] = [];
-          inputs["reference_images"].push(...el.referenceImageUrls);
+          const remaining = MAX_TOTAL_REFS - inputs["reference_images"].length;
+          if (remaining > 0) {
+            const toAdd = el.referenceImageUrls.slice(0, remaining);
+            inputs["reference_images"].push(...toAdd);
+            imagesAdded = toAdd.length;
+          }
         }
-        // Replace @token with a gender-agnostic reference descriptor the model can act on
-        if (el.name && inputs["prompt"] && typeof inputs["prompt"] === "string") {
+        // Only replace @token if images were actually included — ordinal must match what the model sees
+        if (imagesAdded > 0 && el.name && inputs["prompt"] && typeof inputs["prompt"] === "string") {
           const token = el.name.toLowerCase().replace(/[^a-z0-9]/g, "");
+          const typeKey = el.elementType;
+          typeCount[typeKey] = (typeCount[typeKey] ?? 0) + 1;
+          const idx = typeCount[typeKey] - 1;
+          const ordinal = ORDINALS[idx] ?? `${idx + 1}th`;
           const descriptor =
-            el.elementType === "character" ? "the character in the reference images" :
-            el.elementType === "location"  ? "the location in the reference images" :
-            el.elementType === "prop"      ? "the prop in the reference images" :
+            el.elementType === "character" ? `the ${ordinal} person in the reference images` :
+            el.elementType === "location"  ? `the ${ordinal} location in the reference images` :
+            el.elementType === "prop"      ? `the ${ordinal} prop in the reference images` :
             el.name;
           inputs["prompt"] = inputs["prompt"].replace(
             new RegExp(`@${token}\\b`, "gi"),

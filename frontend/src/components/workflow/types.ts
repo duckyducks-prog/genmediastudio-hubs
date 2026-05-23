@@ -58,6 +58,9 @@ export enum NodeType {
 
   // COMPOUND nodes (user-created reusable workflows)
   Compound = "compound",
+
+  // MOODBOARD — aggregates multiple images, outputs as reference array
+  Moodboard = "moodboard",
 }
 
 // Re-export FilterConfig for convenience
@@ -436,6 +439,12 @@ export interface CompoundNodeData extends BaseNodeData {
   compoundId: string;
 }
 
+export interface MoodboardNodeData extends BaseNodeData {
+  moodboardLabel?: string;        // user-editable name, e.g. "Paul — Athletic"
+  images: string[];               // display URLs
+  imageRefs: string[];            // asset IDs for persistence
+}
+
 // ============================================================================
 // UNION TYPE FOR ALL NODE DATA
 // ============================================================================
@@ -472,7 +481,8 @@ export type WorkflowNodeData =
   | TextOutputNodeData
   | DownloadNodeData
   | StickyNoteNodeData
-  | CompoundNodeData;
+  | CompoundNodeData
+  | MoodboardNodeData;
 
 // ============================================================================
 // CUSTOM NODE & EDGE TYPES
@@ -1530,8 +1540,32 @@ export const NODE_CONFIGURATIONS: Record<NodeType, NodeConfiguration> = {
     label: "Compound Node",
     category: "modifier",
     description: "User-created reusable workflow component",
-    inputConnectors: [], // Dynamic - defined by compound definition
-    outputConnectors: [], // Dynamic - defined by compound definition
+    inputConnectors: [],
+    outputConnectors: [],
+  },
+
+  // ========== MOODBOARD ==========
+  [NodeType.Moodboard]: {
+    type: NodeType.Moodboard,
+    label: "Moodboard",
+    category: "input",
+    description: "Aggregate multiple images into a single reference pack",
+    inputConnectors: [
+      {
+        id: "images",
+        label: "Images",
+        type: ConnectorType.Images,
+        required: false,
+        acceptsMultiple: true,
+      },
+    ],
+    outputConnectors: [
+      {
+        id: "images",
+        label: "Reference Images",
+        type: ConnectorType.Images,
+      },
+    ],
   },
 
 };

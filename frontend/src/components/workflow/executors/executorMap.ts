@@ -105,4 +105,12 @@ export const executorMap = new Map<NodeType, NodeExecutor>([
 
   // Compound nodes
   [NodeType.Compound, executeCompound],
+
+  // Moodboard — merge drag-dropped images (node.data) with connection-sourced images (inputs)
+  [NodeType.Moodboard, async (node, inputs) => {
+    const nodeImages: string[] = (node.data as any).images ?? [];
+    const connectedImages: string[] = Array.isArray(inputs["images"]) ? inputs["images"] : [];
+    const images = [...new Set([...nodeImages, ...connectedImages])];
+    return { success: true, data: { outputs: { images } } };
+  }],
 ]);

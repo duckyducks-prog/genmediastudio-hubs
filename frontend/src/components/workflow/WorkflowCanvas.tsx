@@ -919,7 +919,17 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
         }));
 
         setNodes(nodesWithReadOnly);
-        setEdges(workflow.edges || []);
+        // Strip any execution animation classes that may have been persisted — edges should
+        // always start inert when a workflow is opened, not replaying a previous run's state
+        const cleanEdges = (workflow.edges || []).map((edge) => ({
+          ...edge,
+          className: (edge.className || "")
+            .replace(/\banimated\b/g, "")
+            .replace(/\bedge-completed\b/g, "")
+            .trim() || undefined,
+          animated: false,
+        }));
+        setEdges(cleanEdges);
         setCurrentWorkflowId(workflow.id || null);
         setCurrentWorkflowName(workflow.name || "Untitled Workflow");
 
@@ -1291,7 +1301,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
     } | null>(null);
 
     // Step 1: Analyze selection and open the input picker dialog
-    const createCompoundFromSelection = useCallback(() => {
+    // Preserved for future "Group Nodes" feature — not exposed in UI yet
+    const _createCompoundFromSelection = useCallback(() => {
       const selectedNodes = nodes.filter((n) => n.selected);
       if (selectedNodes.length < 2) {
         toast({
@@ -1352,6 +1363,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
       // No source nodes to pick — create compound directly
       finalizeCompound([], selectedNodes, selectedIds, incomingEdges, outgoingEdges, internalEdges);
     }, [nodes, edges, toast]);
+    void _createCompoundFromSelection; // referenced to satisfy noUnusedLocals — entry point for future Group Nodes UI
 
     // Step 2: Build and insert the compound node
     const finalizeCompound = useCallback((
@@ -1624,13 +1636,50 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
         setEdges((eds) =>
           eds.filter((e) => e.source !== nodeId && e.target !== nodeId)
         );
-        toast({
-          title: "Deleted",
-          description: "Node deleted",
-        });
+        toast({ title: "Deleted", description: "Node deleted" });
       },
       [setNodes, setEdges, toast]
     );
+
+    // ── Bulk actions on selected nodes ────────────────────────────
+    const isBulkRunning = useRef(false);
+
+    const handleBulkDelete = useCallback(() => {
+      const deletedIds = new Set(nodes.filter((n) => n.selected).map((n) => n.id));
+      if (!deletedIds.size) return;
+      setNodes((nds) => nds.filter((n) => !deletedIds.has(n.id)));
+      setEdges((eds) => eds.filter((e) => !deletedIds.has(e.source) && !deletedIds.has(e.target)));
+      toast({ title: `Deleted selected nodes` });
+    }, [nodes, setNodes, setEdges, toast]);
+
+    const handleBulkReset = useCallback(() => {
+      setNodes((nds) => {
+        const selectedIds = new Set(nds.filter((n) => n.selected).map((n) => n.id));
+        if (!selectedIds.size) return nds;
+        return nds.map((n) => {
+          if (!selectedIds.has(n.id)) return n;
+          // Only clear execution-state fields — preserve user-authored content (text, images, imageRef, etc.)
+          const { status: _s, isGenerating: _ig, error: _e, outputs: _o, ...config } = n.data as Record<string, unknown>;
+          return { ...n, data: { ...config, status: "ready", isGenerating: false } };
+        });
+      });
+      toast({ title: `Reset nodes to idle` });
+    }, [setNodes, toast]);
+
+    const handleBulkRun = useCallback(() => {
+      if (isBulkRunning.current) return;
+      const selectedNodes = nodes.filter((n) => n.selected);
+      if (!selectedNodes.length) return;
+      isBulkRunning.current = true;
+      toast({ title: `Running ${selectedNodes.length} node${selectedNodes.length !== 1 ? "s" : ""}` });
+      (async () => {
+        for (const node of selectedNodes) {
+          await executeSingleNode(node.id);
+        }
+      })()
+        .catch((err) => toast({ title: "Bulk run failed", description: String(err), variant: "destructive" }))
+        .finally(() => { isBulkRunning.current = false; });
+    }, [nodes, executeSingleNode, toast]);
 
     const handleDuplicateNode = useCallback(
       (nodeId: string) => {
@@ -2034,8 +2083,11 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(
                 setNodes((nds) => nds.map((n) => ({ ...n, selected: n.id === nodeId })));
                 setTimeout(() => pasteNodeConfig(), 0);
               }}
-              onCreateCompound={createCompoundFromSelection}
               hasMultipleSelected={nodes.filter((n) => n.selected).length >= 2}
+              selectedCount={nodes.filter((n) => n.selected).length}
+              onBulkDelete={handleBulkDelete}
+              onBulkReset={handleBulkReset}
+              onBulkRun={handleBulkRun}
             />
           )}
 

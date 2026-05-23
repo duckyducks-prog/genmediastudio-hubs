@@ -284,6 +284,7 @@ export const EXPOSABLE_PARAMS: Record<NodeType, ExposableParam[]> = {
   [NodeType.VoiceChanger]: [],
   [NodeType.MergeVideos]: [],
   [NodeType.AddMusicToVideo]: [],
+  [NodeType.Moodboard]: [],
 };
 
 /**

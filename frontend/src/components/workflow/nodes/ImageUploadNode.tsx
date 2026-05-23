@@ -1,12 +1,13 @@
 import { logger } from "@/lib/logger";
-import { memo, useState, useEffect } from "react";
+import { memo, useState, useEffect, useRef } from "react";
 import { Position, NodeProps, useReactFlow } from "reactflow";
 import { ConnectedHandle } from './ConnectedHandle';
 import { Button } from "@/components/ui/button";
 import { ImageInputNodeData } from "../types";
-import { Upload, X, Image as ImageIcon, Loader2, FolderOpen } from "lucide-react";
+import { Upload, X, Image as ImageIcon, Loader2, FolderOpen, User, BookmarkPlus, User as UserIcon, MapPin } from "lucide-react";
 import { saveToLibrary } from "@/lib/api-helpers";
 import { RunNodeButton } from "./RunNodeButton";
+import { listSceneElements, SceneElement } from "@/lib/scene-elements-api";
 
 function ImageUploadNode({ data, id }: NodeProps<ImageInputNodeData>) {
   // Use imageUrl from data, which may be resolved from imageRef on workflow load
@@ -14,6 +15,100 @@ function ImageUploadNode({ data, id }: NodeProps<ImageInputNodeData>) {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const { setNodes } = useReactFlow();
+
+  // Character / element picker
+  const [showElementPicker, setShowElementPicker] = useState(false);
+
+  // Save-as-element flow
+  const [savePhase, setSavePhase] = useState<"idle"|"picking"|"naming"|"saving">("idle");
+  const [saveElType, setSaveElType] = useState<"character"|"location"|null>(null);
+  const [saveElName, setSaveElName] = useState("");
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const saveNameRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (savePhase === "naming" && saveNameRef.current) saveNameRef.current.focus();
+  }, [savePhase]);
+  const [elements, setElements] = useState<SceneElement[]>([]);
+  const [selectedElement, setSelectedElement] = useState<{ name: string; previewUrl: string | null } | null>(
+    (data as any).elementName
+      ? { name: (data as any).elementName, previewUrl: (data as any).elementPreviewUrl ?? null }
+      : null
+  );
+
+  // Sync badge when data.elementName is cleared externally (e.g. bulk reset)
+  useEffect(() => {
+    const name = (data as any).elementName as string | undefined;
+    if (!name) {
+      setSelectedElement(null);
+    } else if (name !== selectedElement?.name) {
+      setSelectedElement({ name, previewUrl: (data as any).elementPreviewUrl ?? null });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [(data as any).elementName]);
+
+  useEffect(() => {
+    if (!showElementPicker) return;
+    const IMAGE_TYPES = new Set(["character", "location", "prop"]);
+    listSceneElements()
+      .then(els => setElements(els.filter(e => IMAGE_TYPES.has(e.element_type) && e.reference_image_urls.length > 0)))
+      .catch(() => {});
+  }, [showElementPicker]);
+
+  const handleSelectElement = (el: SceneElement) => {
+    const urls = el.reference_image_urls;
+    const preview = urls[0] ?? null;
+    setSelectedElement({ name: el.name, previewUrl: preview });
+    setImageUrl(preview);
+    setShowElementPicker(false);
+
+    const newData = {
+      ...data,
+      imageRef: undefined,
+      imageUrl: preview,
+      elementName: el.name,
+      elementPreviewUrl: preview,
+      // outputs.image stays scalar for backward compat; full array goes to reference_images
+      outputs: { image: preview, reference_images: urls },
+    };
+    setNodes(nodes => nodes.map(n => n.id === id ? { ...n, data: newData } : n));
+    window.dispatchEvent(new CustomEvent("node-update", { detail: { id, data: newData } }));
+  };
+
+  const handleSaveAsElement = async () => {
+    if (!saveElName.trim() || !saveElType) return;
+    const { auth } = await import("@/lib/firebase");
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      setSaveError("Not signed in");
+      return;
+    }
+    setSavePhase("saving");
+    setSaveError(null);
+    try {
+      const { VEO_API_BASE_URL } = await import("@/lib/api-config");
+      const token = await currentUser.getIdToken();
+      const urls = Array.isArray((data as any).outputs?.reference_images)
+        ? (data as any).outputs.reference_images
+        : Array.isArray((data as any).outputs?.image)
+          ? (data as any).outputs.image
+          : [(data as any).imageUrl].filter(Boolean);
+      const res = await fetch(`${VEO_API_BASE_URL}/v1/scene-elements`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ name: saveElName.trim(), element_type: saveElType, reference_image_urls: urls }),
+      });
+      if (!res.ok) throw new Error(`Save failed (${res.status})`);
+      // Dynamic import avoids circular dep between sibling node files
+      const { invalidateElementChipCache } = await import("./PromptInputNode");
+      invalidateElementChipCache();
+      setSavePhase("idle");
+      setSaveElName("");
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Save failed");
+      setSavePhase("naming");
+    }
+  };
 
   // Sync imageUrl state when data.imageUrl changes (e.g., on workflow load)
   useEffect(() => {
@@ -241,34 +336,111 @@ function ImageUploadNode({ data, id }: NodeProps<ImageInputNodeData>) {
             />
           </label>
         )}
-        {!imageUrl && (
-          <Button
-            onClick={() => {
-              // Dispatch event to open asset library with this node as target
-              window.dispatchEvent(
-                new CustomEvent("open-asset-library-inline", {
-                  detail: { nodeId: id, assetType: "image" },
-                })
-              );
-            }}
-            variant="outline"
-            size="sm"
-            className="w-full"
-            disabled={isUploading}
-          >
-            <FolderOpen className="w-4 h-4 mr-2" />
-            Browse Library
-          </Button>
+        {/* Character badge when element selected */}
+        {imageUrl && selectedElement && (
+          <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
+            <User className="w-3 h-3" />
+            {selectedElement.name} · {(data as any).outputs?.image?.length ?? 1} ref images
+          </p>
         )}
-        {uploadError && (
-          <p className="text-xs text-destructive">{uploadError}</p>
-        )}
-        {data.imageRef && !uploadError && (
-          <p className="text-xs text-muted-foreground">✓ Saved to library</p>
-        )}
+        {uploadError && <p className="text-xs text-destructive mt-1">{uploadError}</p>}
       </div>
 
-      <RunNodeButton nodeId={id} isExecuting={isExecuting} disabled={data.readOnly} />
+      {/* ── Icon toolbar ── */}
+      <div className="flex items-center gap-1 px-2.5 py-2 border-t border-border bg-black/10">
+        {/* Browse Library */}
+        <div className="relative">
+          <button
+            onClick={() => window.dispatchEvent(new CustomEvent("open-asset-library-inline", { detail: { nodeId: id, assetType: "image" } }))}
+            disabled={isUploading || data.readOnly}
+            title="Browse Library"
+            className="node-tool-btn group"
+          >
+            <FolderOpen className="w-3.5 h-3.5" />
+            <span className="node-tool-tip">Browse Library</span>
+          </button>
+        </div>
+
+        {/* Use Character */}
+        <div className="relative">
+          <button
+            onClick={() => setShowElementPicker(v => !v)}
+            disabled={isUploading || data.readOnly}
+            title="Use Character"
+            className="node-tool-btn group"
+          >
+            <User className="w-3.5 h-3.5" />
+            <span className="node-tool-tip">Use Character</span>
+          </button>
+          {showElementPicker && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setShowElementPicker(false)} />
+              <div className="absolute bottom-full left-0 mb-1 z-50 w-48 bg-card border border-border rounded-lg shadow-xl py-1 max-h-48 overflow-y-auto">
+                {elements.length === 0
+                  ? <p className="px-3 py-2 text-xs text-muted-foreground">No characters yet</p>
+                  : elements.map(el => (
+                    <button key={el.id} onClick={() => handleSelectElement(el)}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-accent transition-colors">
+                      {el.reference_image_urls[0] && <img src={el.reference_image_urls[0]} className="w-6 h-6 rounded object-cover flex-shrink-0" alt="" />}
+                      <span className="truncate">{el.name}</span>
+                    </button>
+                  ))
+                }
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Save as element */}
+        <div className="relative">
+          <button
+            onClick={() => setSavePhase("picking")}
+            title="Save as element"
+            className="node-tool-btn group"
+          >
+            <BookmarkPlus className="w-3.5 h-3.5" />
+            <span className="node-tool-tip">Save as element</span>
+          </button>
+          {savePhase === "picking" && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setSavePhase("idle")} />
+              <div className="absolute bottom-full left-0 mb-1 z-50 bg-card border border-border rounded-lg shadow-xl p-2 flex flex-col gap-1 min-w-[140px]">
+                <button onClick={() => { setSaveElType("character"); setSavePhase("naming"); }}
+                  className="flex items-center gap-2 px-3 py-2 text-xs rounded-md hover:bg-accent transition-colors text-left">
+                  <UserIcon className="w-3.5 h-3.5" /> Character
+                </button>
+                <button onClick={() => { setSaveElType("location"); setSavePhase("naming"); }}
+                  className="flex items-center gap-2 px-3 py-2 text-xs rounded-md hover:bg-accent transition-colors text-left">
+                  <MapPin className="w-3.5 h-3.5" /> Location
+                </button>
+              </div>
+            </>
+          )}
+          {(savePhase === "naming" || savePhase === "saving") && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => savePhase !== "saving" && setSavePhase("idle")} />
+              <div className="absolute bottom-full left-0 mb-1 z-50 bg-card border border-border rounded-lg shadow-xl p-3 min-w-[180px]" onClick={e => e.stopPropagation()}>
+                <p className="text-[10px] text-muted-foreground mb-2">Name this {saveElType}</p>
+                <input ref={saveNameRef} value={saveElName} onChange={e => setSaveElName(e.target.value)}
+                  placeholder={saveElType === "character" ? "e.g. Sarah" : "e.g. Rooftop"}
+                  disabled={savePhase === "saving"}
+                  className="w-full text-xs px-2 py-1.5 rounded border border-border bg-background outline-none focus:border-primary mb-1 disabled:opacity-50"
+                  onKeyDown={e => { if (e.key === "Enter") handleSaveAsElement(); }}
+                />
+                {saveError && <p className="text-[9px] text-destructive mb-1">{saveError}</p>}
+                <p className="text-[9px] text-muted-foreground">
+                  {savePhase === "saving" ? "Saving…" : "Press Enter to save"}
+                </p>
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="flex-1" />
+
+        {/* Run node */}
+        <RunNodeButton nodeId={id} isExecuting={isExecuting} disabled={data.readOnly} compact />
+      </div>
 
       {/* Output Handle */}
       <ConnectedHandle

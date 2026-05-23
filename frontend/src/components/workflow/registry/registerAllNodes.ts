@@ -49,3 +49,6 @@ import "../nodes/StickyNoteNode.register";
 
 // Compound nodes (data-only, no static component)
 import "../nodes/CompoundNode.register";
+
+// Moodboard — image aggregator with save-as-element
+import "../nodes/MoodboardNode.register";

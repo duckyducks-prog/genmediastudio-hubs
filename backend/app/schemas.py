@@ -7,7 +7,7 @@ from typing import Optional, List
 MAX_PROMPT_LENGTH = 10_000  # ~2,500 words
 MAX_IMAGE_BASE64 = 50_000_000  # ~50MB base64 (~37MB raw image)
 MAX_VIDEO_BASE64 = 150_000_000  # ~150MB base64 (~110MB raw, enough for 30s 1080p)
-MAX_REFERENCE_IMAGES = 10  # Max reference images per request
+MAX_REFERENCE_IMAGES = 20  # Supports up to ~3 characters (6 shots each)
 
 # ============== REQUEST MODELS ==============
 

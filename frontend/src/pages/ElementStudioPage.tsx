@@ -59,13 +59,24 @@ interface ShotResult {
   resolvedUrl: string | null; // permanent GCS URL
 }
 
+// Portraits first — face is established and feeds into wide shots for consistency
 const SHOT_DEFINITIONS: Pick<ShotResult, "label" | "promptSuffix">[] = [
-  { label: "Full body · front", promptSuffix: "full body shot, frontal view, plain white background, neutral expression, soft studio lighting" },
-  { label: "Full body · side",  promptSuffix: "full body shot, side profile view, plain white background, neutral expression, soft studio lighting" },
   { label: "Portrait · front",  promptSuffix: "close-up portrait, frontal view, plain white background, neutral expression, soft studio lighting" },
   { label: "Portrait · side",   promptSuffix: "close-up portrait, side profile view, plain white background, neutral expression, soft studio lighting" },
   { label: "Smile · front",     promptSuffix: "close-up portrait, frontal view, plain white background, smiling with teeth showing, soft studio lighting" },
   { label: "Smile · side",      promptSuffix: "close-up portrait, side profile view, plain white background, smiling with teeth showing, soft studio lighting" },
+  { label: "Full body · front", promptSuffix: "full body shot, frontal view, plain white background, neutral expression, soft studio lighting" },
+  { label: "Full body · side",  promptSuffix: "full body shot, side profile view, plain white background, neutral expression, soft studio lighting" },
+];
+
+// Wardrobe shot prompts — explicit reference-image anchoring for both character and outfit
+const WARDROBE_SHOT_DEFINITIONS: Pick<ShotResult, "label" | "promptSuffix">[] = [
+  { label: "Full body · front", promptSuffix: "full body shot, frontal view, plain white background, neutral expression, soft studio lighting, of character in reference image, wearing the wardrobe in reference images" },
+  { label: "Full body · side",  promptSuffix: "full body shot, side profile view, plain white background, neutral expression, soft studio lighting, of character in reference image, wearing the wardrobe in reference images" },
+  { label: "Portrait · front",  promptSuffix: "close-up portrait, frontal view, plain white background, neutral expression, soft studio lighting, of character in reference image, wearing the wardrobe in reference images" },
+  { label: "Portrait · side",   promptSuffix: "close-up portrait, side profile view, plain white background, neutral expression, soft studio lighting, of character in reference image, wearing the wardrobe in reference images" },
+  { label: "Smile · front",     promptSuffix: "close-up portrait, frontal view, plain white background, smiling with teeth showing, soft studio lighting, of character in reference image, wearing the wardrobe in reference images" },
+  { label: "Smile · side",      promptSuffix: "close-up portrait, side profile view, plain white background, smiling with teeth showing, soft studio lighting, of character in reference image, wearing the wardrobe in reference images" },
 ];
 
 // ─── Wardrobe chips ───────────────────────────────────────────────────────────
@@ -602,17 +613,16 @@ export default function ElementStudioPage() {
     if (!wardrobeText) return;
 
     setStyleShotsPhase("generating");
-    setStyleShots(SHOT_DEFINITIONS.map((d, i) => ({
+    setStyleShots(WARDROBE_SHOT_DEFINITIONS.map((d, i) => ({
       ...d, status: i === 0 ? "loading" : "idle", imageUrl: null, assetId: null, resolvedUrl: null,
     })));
 
     const token = await auth.currentUser?.getIdToken();
-    const charName = draft.name.trim();
     const accumulated: string[] = []; // asset IDs of completed style shots
 
-    for (let i = 0; i < SHOT_DEFINITIONS.length; i++) {
-      const def = SHOT_DEFINITIONS[i];
-      const prompt = `${charName}, ${wardrobeText}, ${def.promptSuffix}`;
+    for (let i = 0; i < WARDROBE_SHOT_DEFINITIONS.length; i++) {
+      const def = WARDROBE_SHOT_DEFINITIONS[i];
+      const prompt = def.promptSuffix; // character + wardrobe fully described by reference images
       // character identity refs + accumulated style shots → consistent wardrobe across angles
       const refs = [...charRefs, ...accumulated];
 
@@ -651,7 +661,7 @@ export default function ElementStudioPage() {
 
     const wardrobeChipPrompts = WARDROBE_CHIPS.filter(c => selectedWardrobeChips.has(c.id)).map(c => c.prompt).join(", ");
     const wardrobeText = [wardrobeChipPrompts, customWardrobeText.trim()].filter(Boolean).join(", ");
-    const def = SHOT_DEFINITIONS[index];
+    const def = WARDROBE_SHOT_DEFINITIONS[index];
     if (!def || !wardrobeText) return;
 
     // Other completed style shots as cross-refs for consistency
@@ -662,7 +672,7 @@ export default function ElementStudioPage() {
 
     setStyleShots(prev => prev.map((s, j) => j === index ? { ...s, status: "loading" } : s));
     const token = await auth.currentUser?.getIdToken();
-    const prompt = `${draft.name.trim()}, ${wardrobeText}, ${def.promptSuffix}`;
+    const prompt = def.promptSuffix; // character + wardrobe fully described by reference images
     try {
       const res = await fetch(API_ENDPOINTS.generate.image, {
         method: "POST",

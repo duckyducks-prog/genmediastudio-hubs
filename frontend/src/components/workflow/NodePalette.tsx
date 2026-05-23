@@ -50,6 +50,13 @@ const paletteNodes: PaletteNode[] = [
     description: "Upload or load an image",
   },
   {
+    type: NodeType.Moodboard,
+    label: "Moodboard",
+    icon: <Layers className="w-4 h-4" />,
+    category: "input",
+    description: "Aggregate images into a reference pack · save as character or location",
+  },
+  {
     type: NodeType.VideoInput,
     label: "Video Input",
     icon: <Video className="w-4 h-4" />,

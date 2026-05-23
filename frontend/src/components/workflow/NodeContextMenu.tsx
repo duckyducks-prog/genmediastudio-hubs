@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Trash2, Copy, Tag, X, Settings, ClipboardPaste, Package } from "lucide-react";
+import { Trash2, Copy, Tag, X, Settings, ClipboardPaste, RotateCcw, Play } from "lucide-react";
 
 interface NodeContextMenuProps {
   x: number;
@@ -12,8 +12,11 @@ interface NodeContextMenuProps {
   onSetLabel: (nodeId: string, label: string | undefined) => void;
   onCopyConfig?: (nodeId: string) => void;
   onPasteConfig?: (nodeId: string) => void;
-  onCreateCompound?: () => void;
   hasMultipleSelected?: boolean;
+  selectedCount?: number;
+  onBulkDelete?: () => void;
+  onBulkReset?: () => void;
+  onBulkRun?: () => void;
 }
 
 export function NodeContextMenu({
@@ -27,8 +30,11 @@ export function NodeContextMenu({
   onSetLabel,
   onCopyConfig,
   onPasteConfig,
-  onCreateCompound,
   hasMultipleSelected = false,
+  selectedCount = 1,
+  onBulkDelete,
+  onBulkReset,
+  onBulkRun,
 }: NodeContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [isEditingLabel, setIsEditingLabel] = useState(false);
@@ -103,14 +109,6 @@ export function NodeContextMenu({
         onClose();
       },
     }] : []),
-    ...(onCreateCompound && hasMultipleSelected ? [{
-      label: "Create Compound Node",
-      icon: Package,
-      onClick: () => {
-        onCreateCompound();
-        onClose();
-      },
-    }] : []),
     {
       label: "Duplicate",
       icon: Copy,
@@ -141,6 +139,53 @@ export function NodeContextMenu({
       },
       danger: false,
     });
+  }
+
+  // Bulk action menu when multiple nodes are selected
+  if (hasMultipleSelected && (onBulkDelete || onBulkReset || onBulkRun)) {
+    const n = selectedCount;
+    const label = `${n} node${n !== 1 ? "s" : ""} selected`;
+    return (
+      <div
+        ref={menuRef}
+        className="fixed z-50 min-w-[180px] bg-card border border-border rounded-lg shadow-lg py-1 overflow-hidden"
+        style={{ left: x, top: y }}
+      >
+        <div className="px-3 py-1.5 border-b border-border">
+          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">{label}</p>
+        </div>
+        {onBulkRun && (
+          <button
+            onClick={() => { onBulkRun(); onClose(); }}
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-accent transition-colors"
+          >
+            <Play className="w-4 h-4" />
+            Run selection
+          </button>
+        )}
+        {onBulkReset && (
+          <button
+            onClick={() => { onBulkReset(); onClose(); }}
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-accent transition-colors"
+          >
+            <RotateCcw className="w-4 h-4" />
+            Reset selection
+          </button>
+        )}
+        {onBulkDelete && (
+          <>
+            <div className="border-t border-border my-1" />
+            <button
+              onClick={() => { onBulkDelete(); onClose(); }}
+              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-accent transition-colors text-destructive hover:text-destructive"
+            >
+              <Trash2 className="w-4 h-4" />
+              Delete selection
+            </button>
+          </>
+        )}
+      </div>
+    );
   }
 
   return (
